@@ -1,9 +1,9 @@
 node_modules/
 .env
-data/
-logs/
-bot.log
-STOP
+/data/
+/logs/
+/bot.log
+/STOP
 *.db
 *.db-wal
 *.db-shm
