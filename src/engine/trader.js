@@ -200,6 +200,7 @@ export class Trader {
                 : { decisions: [] };
 
             if (decisions.length) this._applyModelGate(decisions);
+            if (decisions.length) await this._applySystem1Gate(decisions);
             for (const d of decisions) await this._record(d, { scanId, day, summary, discovery, useAi });
 
             if (capacity <= 0) logger.info(this.code, 'DAILY LIMIT', `${cfg.MAX_TRADES_PER_STRATEGY_PER_DAY} entries reached today`);
@@ -328,6 +329,21 @@ export class Trader {
         }
     }
 
+    /**
+     * System-1 decision gate (Jev/Laya-style): every accepted setup is asked
+     * for a typed verdict (take/direction/conviction/noul) with no reasoning.
+     * `shadow` (default) records the verdict on the decision; `on` vetoes weak
+     * ones. Lives in ctx so the daily budget and error state are shared across
+     * all strategies. Never throws — anything missing degrades to no opinion.
+     */
+    async _applySystem1Gate(decisions) {
+        try {
+            await this.ctx.system1?.apply(decisions);
+        } catch (err) {
+            this.ctx.logger?.warn(this.code, 'SYSTEM1 GATE SKIPPED', String(err?.message || err));
+        }
+    }
+
     async _record(d, { scanId, day, summary, useAi }) {
         const { db, logger, positions } = this.ctx;
         const meta = {
@@ -342,6 +358,9 @@ export class Trader {
             // Nightly-model confidence at decision time (null when shadow/off
             // or before the first promotion) — the next training run's input.
             modelScore: d.modelScore ?? null,
+            // System-1 verdict at decision time (null when the gate never
+            // answered) — the calibrated-decision model's training input.
+            system1: d.system1 ?? null,
             // Last ~90 1m bars at decision time — the training feature window.
             featureBars: d.bars ?? null,
         };
@@ -370,6 +389,7 @@ export class Trader {
                     softGate: Boolean(d.softGate),
                     isHiddenGem: Boolean(d.isHiddenGem),
                     modelScore: d.modelScore ?? null,
+                    system1: d.system1 ?? null,
                     featureBars: d.bars ?? null,
                     option: meta.option || null,
                     underlying: meta.underlying || null,

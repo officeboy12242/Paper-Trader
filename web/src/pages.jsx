@@ -234,6 +234,13 @@ export function RiskConfig() {
       ['NSE', `${c.fees?.nse?.venue ?? '—'} · ₹${c.fees?.nse?.brokerageFlat} or ${c.fees?.nse?.brokeragePct}% brokerage + STT/exchange/SEBI/stamp`],
     ]],
     ['AI gate', [['Mode', c.aiGateMode], ['Configured', c.aiConfigured ? 'yes' : 'no']]],
+    ['System-1 AI gate (Jev/Laya-style)', [
+      ['Mode', `${c.system1?.mode ?? '—'} · vetoes below ${c.system1?.convictionMin ?? '—'}/100 conviction in “on”`],
+      ['Model', c.system1?.model ?? '—'],
+      ['Configured', c.system1?.configured ? `yes${c.system1.lastRun?.model ? ` · last verdict ${c.system1.lastRun.ok ? `${c.system1.lastRun.verdict?.take ?? '?'} @ ${c.system1.lastRun.verdict?.conviction ?? '?'}/100` : `failed: ${(c.system1.lastRun.error || '').slice(0, 60)}`}` : ''}` : 'no — set SYSTEM1_API_KEY or GROQ_API_KEY'],
+      ['Calls today', `${c.system1?.callsToday ?? 0}${c.system1?.maxPerDay ? ` / ${c.system1.maxPerDay}` : ''}`],
+      ['Faults', `${c.system1?.consecutiveErrors ?? 0} consecutive${c.system1?.cooldownActive ? ' · cooling down' : ''}`],
+    ]],
     ['Self-tuning (nightly trainer)', [
       ['Trainer', c.ml?.enabled ? `on · ${c.ml.trainHourIst}:00 IST once a day, keeps last ${c.ml.keepVersions} runs` : 'off'],
       ['Needs before it trains', `≥ ${c.ml?.minTrades} closed trades + walk-forward test ≥ ${c.ml?.minTest}, accuracy ≥ ${(c.ml?.minAcc ?? 0) * 100}%`],

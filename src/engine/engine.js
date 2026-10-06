@@ -25,6 +25,7 @@ import { sessionPhase, sessionDate, weekKey, monthKey } from '../market/clock.js
 import { computeMetrics, equityCurve, pnlBy, filterPeriod, periodRange } from '../stats/statistics.js';
 import { rankStrategies, rankingSettings } from '../stats/ranking.js';
 import { runTraining } from '../ml/trainer.js';
+import { System1Gate } from '../ml/system1.js';
 import { publicConfig } from '../config.js';
 
 export class Engine {
@@ -78,13 +79,16 @@ export class Engine {
         // Live self-training state. Shared by reference with every trader's
         // ctx so a promoted model hot-swaps in without rebuilding anything.
         this.ml = { model: null, status: { ran: false, promoted: false, reason: 'no training run yet', at: null } };
+        // System-1 decision gate (Jev/Laya-style). Shared so the daily call
+        // budget and cooldown state are global, not per trader.
+        this.system1 = new System1Gate({ cfg, logger, now: () => this.now() });
         this._inflight = new Set();
     }
 
     /** Register strategies from the WA-BOT source list and build one trader each. */
     init() {
         const defs = discoverStrategies(this.cfg);
-        const ctx = { cfg: this.cfg, db: this.db, logger: this.logger, positions: this.positions, marketData: this.marketData, mongo: this.mongo, now: this.now, ml: this.ml };
+        const ctx = { cfg: this.cfg, db: this.db, logger: this.logger, positions: this.positions, marketData: this.marketData, mongo: this.mongo, now: this.now, ml: this.ml, system1: this.system1 };
         const existing = new Map(this.db.listStrategies().map((s) => [s.key, s]));
         this.traders = defs.map((def) => {
             // A strategy toggled off in the dashboard stays off across restarts.
@@ -417,6 +421,15 @@ export class Engine {
                 hasModel: Boolean(this.ml.model),
                 ...this.ml.status,
             },
+            system1: {
+                mode: this.cfg.SYSTEM1_GATE_MODE,
+                configured: this.system1.configured,
+                model: this.cfg.SYSTEM1_MODEL,
+                callsToday: this.system1.callsToday,
+                maxPerDay: this.cfg.SYSTEM1_MAX_PER_DAY,
+                consecutiveErrors: this.system1.consecutiveErrors,
+                lastRun: this.system1.lastRun,
+            },
         };
     }
 
@@ -434,6 +447,14 @@ export class Engine {
                     ? { id: m.id, sampleSize: m.sample_size, testAcc: m.metrics?.testAcc ?? null, trainedAt: m.created_at, featureCount: (m.weights || []).length }
                     : null,
                 lastRun: { ran: Boolean(s.ran), promoted: Boolean(s.promoted), reason: s.reason ?? null, sampleSize: s.sampleSize ?? null, testAcc: s.testAcc ?? null, at: s.at ?? null },
+            },
+            system1: {
+                ...base.system1,
+                // Live half: how the gate has been doing today.
+                callsToday: this.system1.callsToday,
+                consecutiveErrors: this.system1.consecutiveErrors,
+                cooldownActive: this.now() < this.system1.cooldownUntil,
+                lastRun: this.system1.lastRun,
             },
         };
     }

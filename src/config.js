@@ -192,6 +192,23 @@ export function loadConfig() {
         ML_GATE_THRESHOLD: num('ML_GATE_THRESHOLD', 0.45, { min: 0, max: 1 }),
         ML_KEEP_VERSIONS: num('ML_KEEP_VERSIONS', 12, { min: 1 }),
 
+        // System-1 decision gate (Jev/Laya-style) on Groq. Every setup that
+        // passes the rules is given to the model as a "state" and it must
+        // answer with ONLY a typed verdict (no reasoning): take yes/no/noul,
+        // direction, conviction 0-100 and a nuance label. Same gate semantics
+        // as the ML gate: shadow records the verdict, on vetoes weak ones.
+        SYSTEM1_GATE_MODE: oneOf('SYSTEM1_GATE_MODE', 'shadow', ['off', 'shadow', 'on']),
+        SYSTEM1_MODEL: str('SYSTEM1_MODEL', 'openai/gpt-oss-120b'),
+        // A clean confirmation needs at least this conviction (0-100) in "on".
+        SYSTEM1_CONVICTION_MIN: num('SYSTEM1_CONVICTION_MIN', 60, { min: 0, max: 100 }),
+        SYSTEM1_TIMEOUT_MS: num('SYSTEM1_TIMEOUT_MS', 15000, { min: 1000, max: 120000 }),
+        // Daily call budget (0 = unlimited). Keeps cost and latency bounded.
+        SYSTEM1_MAX_PER_DAY: num('SYSTEM1_MAX_PER_DAY', 120, { min: 0 }),
+        // After 3 consecutive failures the gate cools down for this long.
+        SYSTEM1_COOLDOWN_MS: num('SYSTEM1_COOLDOWN_MS', 600000, { min: 0 }),
+        // Optional dedicated key; defaults to GROQ_API_KEY when unset.
+        SYSTEM1_API_KEY: str('SYSTEM1_API_KEY', ''),
+
         LOT_SIZE_SOURCE: oneOf('LOT_SIZE_SOURCE', 'nse', ['nse', 'repo']),
 
         // Statistics and ranking.
@@ -343,6 +360,17 @@ export function publicConfig(cfg) {
             gateThreshold: cfg.ML_GATE_THRESHOLD,
             keepVersions: cfg.ML_KEEP_VERSIONS,
             features: 16,
+        },
+        // System-1 decision gate (Jev/Laya-style). Live stats (calls today,
+        // last verdict, error state) are filled in by the engine.
+        system1: {
+            mode: cfg.SYSTEM1_GATE_MODE,
+            model: cfg.SYSTEM1_MODEL,
+            convictionMin: cfg.SYSTEM1_CONVICTION_MIN,
+            timeoutMs: cfg.SYSTEM1_TIMEOUT_MS,
+            maxPerDay: cfg.SYSTEM1_MAX_PER_DAY,
+            cooldownMs: cfg.SYSTEM1_COOLDOWN_MS,
+            configured: Boolean((cfg.SYSTEM1_API_KEY || cfg.GROQ_API_KEY || '').trim()),
         },
         // Where each venue's charges come from, so the dashboard can show them.
         fees: {
