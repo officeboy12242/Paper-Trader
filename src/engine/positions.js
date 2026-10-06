@@ -342,7 +342,7 @@ export class PositionManager {
         const rate = this.strategyById(trade.strategy_id)?.roundTheClock ? this.cfg.INR_USD_RATE || 84 : 1;
         const gross = round2(grossPnl(trade.direction, trade.entry_price, price, trade.quantity) * rate);
         // Fees are computed in quote currency (USD for gold/ETH) — convert like gross.
-        const fees = round2(roundTripFees({ direction: trade.direction, entryPrice: trade.entry_price, exitPrice: price, quantity: trade.quantity }, this.cfg) * rate);
+        const fees = round2(roundTripFees({ direction: trade.direction, entryPrice: trade.entry_price, exitPrice: price, quantity: trade.quantity, symbol: trade.symbol }, this.cfg) * rate);
         const net = round2(gross - fees);
         const holdingSeconds = Math.max(0, Math.round((exitTime - trade.entry_time) / 1000));
         // Persist the final stop / trailing state first, so the closed record shows how it got here.

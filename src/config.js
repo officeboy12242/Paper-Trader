@@ -162,6 +162,20 @@ export function loadConfig() {
         FEE_SEBI_PER_CRORE: num('FEE_SEBI_PER_CRORE', 10, { min: 0 }),
         FEE_STAMP_BUY_PCT: num('FEE_STAMP_BUY_PCT', 0.002, { min: 0 }),
         FEE_GST_PCT: num('FEE_GST_PCT', 18, { min: 0 }),
+
+        // Delta Exchange fees for gold + ETH. Charged per side on notional,
+        // plus 18% GST (FEE_GST_PCT) on the fee. Source, pulled live from
+        // GET https://api.india.delta.exchange/v2/products:
+        //   XAUTUSD (gold)  maker 0.01%  taker 0.01%
+        //   ETHUSD          maker 0.02%  taker 0.05%
+        // Every order this engine fires (market entry, stop entry, stop/target
+        // exit) takes liquidity, so both legs fill as taker.
+        DELTA_FEE_SIDE: oneOf('DELTA_FEE_SIDE', 'taker', ['maker', 'taker']),
+        DELTA_FEE_GOLD_MAKER_PCT: num('DELTA_FEE_GOLD_MAKER_PCT', 0.01, { min: 0 }),
+        DELTA_FEE_GOLD_TAKER_PCT: num('DELTA_FEE_GOLD_TAKER_PCT', 0.01, { min: 0 }),
+        DELTA_FEE_ETH_MAKER_PCT: num('DELTA_FEE_ETH_MAKER_PCT', 0.02, { min: 0 }),
+        DELTA_FEE_ETH_TAKER_PCT: num('DELTA_FEE_ETH_TAKER_PCT', 0.05, { min: 0 }),
+
         LOT_SIZE_SOURCE: oneOf('LOT_SIZE_SOURCE', 'nse', ['nse', 'repo']),
 
         // Statistics and ranking.
@@ -300,6 +314,12 @@ export function publicConfig(cfg) {
             profitBookInr: cfg.PROFIT_BOOK_INR,
         },
         inrUsdRate: cfg.INR_USD_RATE,
+        // Where each venue's charges come from, so the dashboard can show them.
+        fees: {
+            gold: { venue: 'Delta Exchange', side: cfg.DELTA_FEE_SIDE, pct: cfg.DELTA_FEE_SIDE === 'maker' ? cfg.DELTA_FEE_GOLD_MAKER_PCT : cfg.DELTA_FEE_GOLD_TAKER_PCT, gstPct: cfg.FEE_GST_PCT },
+            eth: { venue: 'Delta Exchange', side: cfg.DELTA_FEE_SIDE, pct: cfg.DELTA_FEE_SIDE === 'maker' ? cfg.DELTA_FEE_ETH_MAKER_PCT : cfg.DELTA_FEE_ETH_TAKER_PCT, gstPct: cfg.FEE_GST_PCT },
+            nse: { venue: 'NSE F&O', brokerageFlat: cfg.FEE_BROKERAGE_FLAT, brokeragePct: cfg.FEE_BROKERAGE_PCT, gstPct: cfg.FEE_GST_PCT },
+        },
     };
 }
 

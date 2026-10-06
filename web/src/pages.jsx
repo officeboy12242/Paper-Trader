@@ -228,6 +228,11 @@ export function RiskConfig() {
     ['Gold 24h trader', [['Symbol', c.gold?.symbol], ['Margin', `₹${fnum(c.gold?.marginInr)}`], ['Leverage', `${c.gold?.leverage}×`], ['Stop ceiling', `$${c.gold?.stopRisk}`], ['Min reward:risk', `${c.gold?.minRR}×`], ['Round the clock', c.gold?.roundTheClock ? 'yes' : 'no']]],
     ['ETH 24h trader', [['Symbol', c.eth?.symbol], ['Margin', `₹${fnum(c.eth?.marginInr)}`], ['Leverage', `${c.eth?.leverage}×`], ['Stop ceiling', `$${c.eth?.stopRisk}`], ['Min reward:risk', `${c.eth?.minRR}×`], ['Round the clock', c.eth?.roundTheClock ? 'yes' : 'no']]],
     ['Per-trade SL / TP (gold + ETH)', [['Stop', 'setup invalidation, capped at ATR × ' + (c.riskPlan?.atrStopMult ?? '—')], ['Target', 'nearest structural level paying ≥ ' + (c.riskPlan?.minRR ?? '—') + '×, capped at ' + (c.riskPlan?.maxRR ?? '—') + '×'], ['Skip rule', 'setups that cannot pay are not taken'], ['Max loss / trade', `₹${fnum(c.riskPlan?.maxRiskInr)}`], ['Profit lock', `₹${fnum(c.riskPlan?.profitBookInr)}`]]],
+    ['Fees (charged on the real venue)', [
+      ['Gold', `${c.fees?.gold?.venue ?? '—'} · ${c.fees?.gold?.side ?? '—'} ${c.fees?.gold?.pct ?? '—'}% of notional/side + ${c.fees?.gold?.gstPct ?? '—'}% GST`],
+      ['ETH', `${c.fees?.eth?.venue ?? '—'} · ${c.fees?.eth?.side ?? '—'} ${c.fees?.eth?.pct ?? '—'}% of notional/side + ${c.fees?.eth?.gstPct ?? '—'}% GST`],
+      ['NSE', `${c.fees?.nse?.venue ?? '—'} · ₹${c.fees?.nse?.brokerageFlat} or ${c.fees?.nse?.brokeragePct}% brokerage + STT/exchange/SEBI/stamp`],
+    ]],
     ['AI gate', [['Mode', c.aiGateMode], ['Configured', c.aiConfigured ? 'yes' : 'no']]],
     ['Ranking', [['Weights (pnl/pf/wr/dd/n)', c.ranking ? Object.values(c.ranking.weights).join(' / ') : '—'], ['Full sample', c.ranking?.fullSampleTrades]]],
     ['Feeds & loops', [['Scan interval', `${c.scanIntervalMinutes} min`], ['Price poll', `${c.pricePollSeconds} s`]]],
