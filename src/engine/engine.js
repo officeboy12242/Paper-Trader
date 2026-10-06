@@ -374,7 +374,9 @@ export class Engine {
                 marginInr: cfg[`${prefix}_MARGIN_INR`],
                 leverage: cfg[`${prefix}_LEVERAGE`],
                 stopRisk: cfg[`${prefix}_STOP_RISK`],
-                target: cfg[`${prefix}_TARGET`],
+                minRR: cfg.MIN_RR,
+            maxRR: cfg.MAX_RR,
+            maxRiskInr: cfg.MAX_RISK_INR,
                 inrUsdRate: cfg.INR_USD_RATE,
                 traders: this.db.listStrategies().filter((s) => s.key.startsWith(prefix.toLowerCase())).map((s) => ({ id: s.id, code: s.code, key: s.key, name: s.name, status: s.status })),
             };
@@ -393,7 +395,9 @@ export class Engine {
             marginInr: cfg[`${prefix}_MARGIN_INR`],
             leverage: cfg[`${prefix}_LEVERAGE`],
             stopRisk: cfg[`${prefix}_STOP_RISK`],
-            target: cfg[`${prefix}_TARGET`],
+            minRR: cfg.MIN_RR,
+            maxRR: cfg.MAX_RR,
+            maxRiskInr: cfg.MAX_RISK_INR,
             traders: this.db.listStrategies().filter((s) => s.key.startsWith(prefix.toLowerCase())).map((s) => ({ id: s.id, code: s.code, key: s.key, name: s.name, status: s.status })),
         };
     }

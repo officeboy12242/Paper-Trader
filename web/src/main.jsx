@@ -72,8 +72,8 @@ function CryptoHero({ title, quotePath, barsPath, color }) {
         <div className="chips">
           <span className="chip">Margin ₹{quote ? fnum(quote.marginInr) : '—'}</span>
           <span className="chip">Leverage {quote?.leverage ?? '—'}×</span>
-          <span className="chip">SL ${quote?.stopRisk ?? '—'}</span>
-          <span className="chip">TP ${quote?.target ?? '—'}</span>
+          <span className="chip" title="Hard ceiling on stop distance — each trade's actual stop is set from its own setup">SL ≤ ${quote?.stopRisk ?? '—'}</span>
+          <span className="chip" title="Target must pay at least this many times the risk, else the setup is skipped">R:R ≥ {quote?.minRR ?? '—'}×</span>
           <span className={`chip ${quote?.stale ? 'stale' : 'live'}`}>{quote?.stale ? 'STALE' : '● LIVE'}</span>
         </div>
       </div>

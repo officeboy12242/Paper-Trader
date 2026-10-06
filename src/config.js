@@ -140,6 +140,18 @@ export function loadConfig() {
         // Gold/ETH: once unrealized profit reaches this, the stop locks that
         // profit (breakeven + booking level) so a winner can never become a loser.
         PROFIT_BOOK_INR: num('PROFIT_BOOK_INR', 2000, { min: 0 }),
+        // Per-trade SL/TP for the 24h gold/ETH traders — derived from each
+        // trade's own setup, never a fixed number:
+        //   stop   = the setup's invalidation point, capped at ATR_STOP_MULT x
+        //            ATR and at <PREFIX>_STOP_RISK
+        //   target = the nearest structural level paying at least MIN_RR,
+        //            capped at MAX_RR; setups that cannot pay are refused
+        MIN_RR: num('MIN_RR', 1.5, { min: 1, max: 10 }),
+        MAX_RR: num('MAX_RR', 4, { min: 1, max: 20 }),
+        ATR_STOP_MULT: num('ATR_STOP_MULT', 3, { min: 0.5, max: 20 }),
+        // Hard cap on what a single stop-loss may cost, in rupees. Position
+        // size is cut to fit it, so a wide stop never means a bigger loss.
+        MAX_RISK_INR: num('MAX_RISK_INR', 3000, { min: 0 }),
 
         // Execution simulation.
         SLIPPAGE_BPS: num('SLIPPAGE_BPS', 2, { min: 0, max: 200 }),
@@ -180,7 +192,6 @@ export function loadConfig() {
         GOLD_MARGIN_INR: num('GOLD_MARGIN_INR', 40000, { min: 1 }),
         GOLD_LEVERAGE: num('GOLD_LEVERAGE', 50, { min: 1, max: 100 }),
         GOLD_STOP_RISK: num('GOLD_STOP_RISK', 15, { min: 1 }),
-        GOLD_TARGET: num('GOLD_TARGET', 40, { min: 1 }),
         // Gold rescans continuously (24h); SCAN_INTERVAL_MINUTES still governs NSE.
         GOLD_SCAN_INTERVAL_MINUTES: num('GOLD_SCAN_INTERVAL_MINUTES', 1, { min: 1, max: 120 }),
         // Real-time spot ticker socket (gold/ETH) for lag-free quotes.
@@ -192,12 +203,14 @@ export function loadConfig() {
         ETH_MARGIN_INR: num('ETH_MARGIN_INR', 40000, { min: 1 }),
         ETH_LEVERAGE: num('ETH_LEVERAGE', 50, { min: 1, max: 100 }),
         ETH_STOP_RISK: num('ETH_STOP_RISK', 25, { min: 1 }),
-        ETH_TARGET: num('ETH_TARGET', 60, { min: 1 }),
         ETH_SCAN_INTERVAL_MINUTES: num('ETH_SCAN_INTERVAL_MINUTES', 1, { min: 1, max: 120 }),
     };
     cfg.DATABASE_PATH = databasePath(cfg.DATABASE_URL);
     if (cfg.ENTRY_CUTOFF >= cfg.EOD_SQUARE_OFF) {
         throw new Error('ENTRY_CUTOFF must be earlier than EOD_SQUARE_OFF');
+    }
+    if (cfg.MIN_RR > cfg.MAX_RR) {
+        throw new Error(`MIN_RR=${cfg.MIN_RR} must not exceed MAX_RR=${cfg.MAX_RR}`);
     }
     return cfg;
 }
@@ -265,7 +278,8 @@ export function publicConfig(cfg) {
             marginInr: cfg.GOLD_MARGIN_INR,
             leverage: cfg.GOLD_LEVERAGE,
             stopRisk: cfg.GOLD_STOP_RISK,
-            target: cfg.GOLD_TARGET,
+            minRR: cfg.MIN_RR,
+            maxRR: cfg.MAX_RR,
             roundTheClock: true,
         },
         eth: {
@@ -273,8 +287,17 @@ export function publicConfig(cfg) {
             marginInr: cfg.ETH_MARGIN_INR,
             leverage: cfg.ETH_LEVERAGE,
             stopRisk: cfg.ETH_STOP_RISK,
-            target: cfg.ETH_TARGET,
+            minRR: cfg.MIN_RR,
+            maxRR: cfg.MAX_RR,
             roundTheClock: true,
+        },
+        // Per-trade SL/TP model: levels come from each trade's own setup.
+        riskPlan: {
+            atrStopMult: cfg.ATR_STOP_MULT,
+            minRR: cfg.MIN_RR,
+            maxRR: cfg.MAX_RR,
+            maxRiskInr: cfg.MAX_RISK_INR,
+            profitBookInr: cfg.PROFIT_BOOK_INR,
         },
         inrUsdRate: cfg.INR_USD_RATE,
     };

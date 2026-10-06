@@ -44,7 +44,9 @@ export class GoldStrategy {
         try {
             setup = this.def.run(bars, {
                 stopRisk: this.cfg[`${this.def.prefix}_STOP_RISK`] ?? 15,
-                target: this.cfg[`${this.def.prefix}_TARGET`] ?? 40,
+                minRR: this.cfg.MIN_RR,
+                maxRR: this.cfg.MAX_RR,
+                atrStopMult: this.cfg.ATR_STOP_MULT,
             });
         } catch (err) {
             throw new Error(`gold signal failed: ${err.message}`);
@@ -75,7 +77,7 @@ export class GoldStrategy {
                 continue;
             }
             const s = c.setup;
-            const lotSize = this._lotSize(c.refPrice ?? s.entry);
+            const lotSize = this._sizing(c.refPrice ?? s.entry, s);
             const pass = accepted < capacity;
             decisions.push({
                 symbol: c.symbol,
@@ -98,13 +100,29 @@ export class GoldStrategy {
         return { decisions, usedSoft: false };
     }
 
-    /** Delta-style sizing: qty = margin x leverage / (price x INR/USD), INR-settled. */
-    _lotSize(price) {
+    /**
+     * Size a trade so its worst case is bounded.
+     *
+     * Start from the Delta-style notional (margin x leverage), then cut the
+     * size down if this trade's own stop would cost more than MAX_RISK_INR.
+     * A wide stop therefore gets fewer units and a tight stop gets more, so
+     * every trade can lose roughly the same number of rupees — the stop
+     * distance decides the size, not the other way round.
+     *
+     * @param {number} price reference price
+     * @param {{ entry: number, stop: number } | null} [setup] this trade's levels
+     */
+    _sizing(price, setup) {
         const px = Number(price);
         if (!(px > 0)) return 1;
         const margin = this.cfg[`${this.def.prefix}_MARGIN_INR`] ?? 40000;
         const lev = this.cfg[`${this.def.prefix}_LEVERAGE`] ?? 50;
         const rate = this.cfg.INR_USD_RATE || 84;
-        return Math.max(1, Math.round((margin * lev) / (px * rate)));
+        const notional = Math.max(1, Math.round((margin * lev) / (px * rate)));
+        const stopDist = setup ? Math.abs(Number(setup.entry) - Number(setup.stop)) : 0;
+        const cap = this.cfg.MAX_RISK_INR;
+        if (!(stopDist > 0) || !(cap > 0)) return notional;
+        const byRisk = Math.floor(cap / (stopDist * rate));
+        return Math.max(1, Math.min(notional, byRisk));
     }
 }
