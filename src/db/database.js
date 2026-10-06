@@ -193,6 +193,11 @@ export class Database {
         if (file !== ':memory:') this.db.exec('PRAGMA journal_mode = WAL;');
         this.db.exec('PRAGMA foreign_keys = ON;');
         this.db.exec(SCHEMA);
+        // Lightweight migration: add profit_booked to existing databases.
+        const cols = this.db.prepare(`PRAGMA table_info(trades)`).all().map((c) => c.name);
+        if (!cols.includes('profit_booked')) {
+            this.db.exec('ALTER TABLE trades ADD COLUMN profit_booked INTEGER NOT NULL DEFAULT 0');
+        }
         this.setKv('schema_version', String(SCHEMA_VERSION));
         this._open = true;
     }

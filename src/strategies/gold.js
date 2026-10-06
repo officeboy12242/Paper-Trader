@@ -14,6 +14,7 @@
  */
 
 import { LONG, SHORT } from '../engine/risk.js';
+import { sessionDate } from '../market/clock.js';
 
 const avg = (xs) => xs.reduce((s, x) => s + x, 0) / Math.max(1, xs.length);
 
@@ -176,9 +177,62 @@ export const ETH_STRATEGIES = [
         sourceFiles: 'src/strategies/gold.js (donchianBreakout)',
         run: donchianBreakout,
     },
+    {
+        key: 'eth_daybreak',
+        symbol: 'ETHUSD',
+        prefix: 'ETH',
+        name: 'ETH · Day Break Confirm',
+        description:
+            '24h ETHUSD spot. Break of the IST day high/low, then a confirming 1m candle whose extreme breaks — entry on the break, stop at the confirmation candle, target the opposite day extreme. Profit locks at the configured booking level.',
+        sourceFiles: 'src/strategies/gold.js (dayHighLowBreakout)',
+        run: dayHighLowBreakout,
+    },
 ];
 
 const round2 = (n) => Math.round(n * 100) / 100;
+
+/**
+ * Day High/Low Break + 1-Minute Confirmation (from the 1-Minute Trading
+ * Strategy PDF). Mark the IST day's high/low; a break of either level is only
+ * the first leg — entry waits for a confirming 1m candle and a break of that
+ * candle's extreme. Stop at the confirmation candle's far edge (bounded),
+ * target the opposite day extreme (the last relevant swing).
+ */
+export function dayHighLowBreakout(bars, { stopRisk = 15, minRisk = 4 } = {}) {
+    if (bars.length < 60) return null;
+    const today = sessionDate(bars[bars.length - 1].ts);
+    const dayBars = bars.filter((b) => sessionDate(b.ts) === today);
+    if (dayBars.length < 10) return null;
+    const dayHigh = Math.max(...dayBars.map((b) => b.high));
+    const dayLow = Math.min(...dayBars.map((b) => b.low));
+    const last = bars[bars.length - 1];
+
+    for (let i = bars.length - 8; i >= 1; i--) {
+        const conf = bars[i];
+        const prev = bars[i - 1];
+        // Setup A: break below the day low, green confirmation, green-high break.
+        if (prev.low < dayLow && conf.close > conf.open && last.close > conf.high) {
+            const entry = conf.high;
+            const stop = conf.low;
+            const risk = entry - stop;
+            if (risk < minRisk) continue;
+            const target = dayHigh;
+            if (target <= entry) continue;
+            return { direction: LONG, entry: round2(entry), stop: round2(stop), target: round2(target), target2: round2(target + (target - entry)), score: 70, checks: { dayLowBreak: true, greenConfirm: true, triggerBreak: true } };
+        }
+        // Setup B: break above the day high, red confirmation, red-low break.
+        if (prev.high > dayHigh && conf.close < conf.open && last.close < conf.low) {
+            const entry = conf.low;
+            const stop = conf.high;
+            const risk = stop - entry;
+            if (risk < minRisk) continue;
+            const target = dayLow;
+            if (target >= entry) continue;
+            return { direction: SHORT, entry: round2(entry), stop: round2(stop), target: round2(target), target2: round2(target - (entry - target)), score: 70, checks: { dayHighBreak: true, redConfirm: true, triggerBreak: true } };
+        }
+    }
+    return null;
+}
 
 export const GOLD_STRATEGIES = [
     {
@@ -210,5 +264,15 @@ export const GOLD_STRATEGIES = [
             '24h XAUUSD. Close beyond the 30-bar channel with an ATR-bounded stop (capped at $15). $40 first target, trailing through $70/$100.',
         sourceFiles: 'src/strategies/gold.js (donchianBreakout)',
         run: donchianBreakout,
+    },
+    {
+        key: 'gold_daybreak',
+        symbol: 'XAUUSD',
+        prefix: 'GOLD',
+        name: 'Gold · Day Break Confirm',
+        description:
+            '24h XAUUSD. Break of the IST day high/low, then a confirming 1m candle whose extreme breaks — entry on the break, stop at the confirmation candle, target the opposite day extreme. Profit locks at the configured booking level.',
+        sourceFiles: 'src/strategies/gold.js (dayHighLowBreakout)',
+        run: dayHighLowBreakout,
     },
 ];

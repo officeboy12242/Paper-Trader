@@ -137,6 +137,9 @@ export function loadConfig() {
         // Risk controls: short cooldown after a stop-loss, and a daily loss limit per strategy.
         STRATEGY_COOLDOWN_MINUTES: num('STRATEGY_COOLDOWN_MINUTES', 5, { min: 0, max: 1440 }),
         DAILY_LOSS_LIMIT_INR: num('DAILY_LOSS_LIMIT_INR', 15000, { min: 0 }),
+        // Gold/ETH: once unrealized profit reaches this, the stop locks that
+        // profit (breakeven + booking level) so a winner can never become a loser.
+        PROFIT_BOOK_INR: num('PROFIT_BOOK_INR', 2000, { min: 0 }),
 
         // Execution simulation.
         SLIPPAGE_BPS: num('SLIPPAGE_BPS', 2, { min: 0, max: 200 }),
@@ -163,7 +166,10 @@ export function loadConfig() {
         MONGODB_DB: str('MONGODB_DB', 'papertrader'),
         LOG_LEVEL: OWN_LOG_LEVEL,
         LOG_DIR: path.resolve(ROOT_DIR, str('LOG_DIR', './logs')),
-        DASHBOARD_HOST: str('DASHBOARD_HOST', process.env.PORT ? '0.0.0.0' : '127.0.0.1'),
+        // Hosted platforms (Render/Railway/Heroku) inject PORT and require
+        // 0.0.0.0 — bind it unconditionally when PORT is present, ignoring any
+        // DASHBOARD_HOST that would keep the service on localhost.
+        DASHBOARD_HOST: process.env.PORT ? '0.0.0.0' : str('DASHBOARD_HOST', '127.0.0.1'),
         // Render/Heroku-style hosts inject PORT; honour it when DASHBOARD_PORT is unset.
         DASHBOARD_PORT: num('DASHBOARD_PORT', Number(process.env.PORT) || 8080, { min: 0, max: 65535 }),
         MARKET_DATA_CONCURRENCY: num('MARKET_DATA_CONCURRENCY', 4, { min: 1, max: 16 }),

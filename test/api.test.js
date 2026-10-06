@@ -44,7 +44,7 @@ test('API endpoints serve dashboard data, CSV export and keep secrets out', asyn
         assert.equal(ov.all.netPnl < 5000, true, 'net is after fees');
 
         const strategies = await (await get('/api/strategies')).json();
-        assert.equal(strategies.length, 6 + 6);
+        assert.equal(strategies.length, 6 + 8);
         const detail = await (await get(`/api/strategies/${strategies[0].id}`)).json();
         assert.equal(detail.metrics.totalTrades, 1);
         assert.equal(detail.equity.length, 1);

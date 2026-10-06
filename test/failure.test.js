@@ -70,7 +70,7 @@ test('database restart: health reports the outage, a reopened database resumes',
     assert.equal(engine.health().database.ok, false);
     assert.equal(engine.health().status, 'FAIL');
     db = new Database(file);
-    assert.equal(db.listStrategies().length, 12, 'state intact after reopen');
+    assert.equal(db.listStrategies().length, 14, 'state intact after reopen');
     db.close();
 });
 
