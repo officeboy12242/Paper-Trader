@@ -1,5 +1,5 @@
 /**
- * System-1 decision gate (Jev / Laya-style) powered by Groq.
+ * System-1 decision gate (Jev / Laya-style) on Groq or Gemini.
  *
  * Jev (TypeSafe) is a paid "System 1" decision model: you give it a state and
  * typed questions (choice / score / noul) and it answers with ONLY typed
@@ -7,14 +7,15 @@
  * (convaiinnovations/laya on Hugging Face) is the Apache-2.0 open clone, but it
  * ships no hosted API and needs ~1 GB+ of RAM to serve, which the Render
  * starter plan cannot afford — so this module reproduces the same behaviour on
- * Groq's always-on API:
+ * always-on hosted LLM APIs:
  *
  *   - the model is told it is a System 1 decision model that must not reason;
- *   - its reply is constrained (JSON-schema strict decoding, retried as plain
- *     JSON) to exactly one compact verdict:
+ *   - its reply is constrained to exactly one compact verdict:
  *       { take: yes|no|noul, direction: buy|sell|neutral,
  *         conviction: 0-100, noul: confirm|deny|uncertain }
- *   - temperature is 0 and max_tokens is tiny so it cannot ramble.
+ *     via structured decoding — Groq json_schema (strict, retried as plain
+ *     JSON), or Gemini responseSchema (retried as bare JSON mode);
+ *   - temperature is 0 and the token budget is tiny so it cannot ramble.
  *
  * Contract with the engine (mirrors the nightly ML gate):
  *   - mode=off     — never called
@@ -32,7 +33,8 @@
 
 import { sessionDate } from '../market/clock.js';
 
-const API_URL = 'https://api.groq.com/openai/v1/chat/completions';
+const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
+const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 
 /** The typed output contract the model must obey (Laya's choice/score/noul idea). */
 export const VERDICT_SCHEMA = {
@@ -45,6 +47,18 @@ export const VERDICT_SCHEMA = {
     },
     required: ['take', 'direction', 'conviction', 'noul'],
     additionalProperties: false,
+};
+
+/** Same contract in Gemini's responseSchema dialect. */
+export const GEMINI_SCHEMA = {
+    type: 'OBJECT',
+    properties: {
+        take: { type: 'STRING', enum: ['yes', 'no', 'noul'] },
+        direction: { type: 'STRING', enum: ['buy', 'sell', 'neutral'] },
+        conviction: { type: 'INTEGER' },
+        noul: { type: 'STRING', enum: ['confirm', 'deny', 'uncertain'] },
+    },
+    required: ['take', 'direction', 'conviction', 'noul'],
 };
 
 export const SYSTEM_PROMPT =
@@ -66,6 +80,20 @@ const DIRECTIONS = new Set(['buy', 'sell', 'neutral']);
 const NOULS = new Set(['confirm', 'deny', 'uncertain']);
 
 const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+
+/**
+ * Is an axios/network error worth a same-attempt retry? 429, 5xx, timeouts and
+ * dropped connections are transient — a spike, not a broken request. A 400
+ * (schema rejected, etc.) is NOT: retrying it wastes time, so those move
+ * straight to the relaxed attempt shape instead.
+ */
+export function isTransient(err) {
+    const status = Number(err?.response?.status);
+    if (status === 429 || (status >= 500 && status < 600)) return true;
+    const code = err?.code;
+    if (['ECONNABORTED', 'ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', 'EPIPE', 'EAI_AGAIN'].includes(code)) return true;
+    return /tim(e|ed) ?out|too many requests|overloaded|high demand/i.test(String(err?.message || ''));
+}
 
 /** Parse a model reply into a typed verdict. Tolerant; null when unparseable. */
 export function parseVerdict(raw) {
@@ -89,6 +117,16 @@ export function parseVerdict(raw) {
     const conviction = Number.isFinite(rawConv) ? Math.round(clamp(rawConv, 0, 100)) : 0;
     const noul = NOULS.has(obj.noul) ? obj.noul : 'uncertain';
     return { take, direction, conviction, noul };
+}
+
+/** Pull the model text out of a provider response. */
+export function extractText(provider, data) {
+    if (!data) return '';
+    if (provider === 'gemini') {
+        const parts = data?.candidates?.[0]?.content?.parts || [];
+        return parts.map((p) => p?.text ?? '').join('');
+    }
+    return data?.choices?.[0]?.message?.content ?? '';
 }
 
 /** Compact, neutral "state" (Jev-style context) for one proposed trade. */
@@ -128,14 +166,15 @@ export function buildState(d) {
  */
 export class System1Gate {
     /**
-     * @param {{cfg: object, logger?: object, now?: () => number, http?: object}} o
+     * @param {{cfg: object, logger?: object, now?: () => number, http?: object, retryDelayMs?: number}} o
      *        http is injectable for tests (defaults to axios.post shape).
      */
-    constructor({ cfg, logger = null, now = Date.now, http = null }) {
+    constructor({ cfg, logger = null, now = Date.now, http = null, retryDelayMs = 1200 }) {
         this.cfg = cfg;
         this.logger = logger;
         this.now = now;
         this.http = http; // null = live axios import below
+        this.retryDelayMs = retryDelayMs; // pause before a transient-error retry
         this.callsToday = 0;
         this.dayKey = null;
         this.consecutiveErrors = 0;
@@ -144,12 +183,30 @@ export class System1Gate {
         this.lastBudgetSkipped = false;
     }
 
+    /** 'groq' or 'gemini' — which provider answers the verdicts. */
+    get provider() {
+        return this.cfg.SYSTEM1_PROVIDER === 'gemini' ? 'gemini' : 'groq';
+    }
+
+    /** Effective model: SYSTEM1_MODEL override, else the provider default. */
+    get model() {
+        const m = String(this.cfg.SYSTEM1_MODEL || '').trim();
+        if (m) return m;
+        return this.provider === 'gemini' ? 'gemini-3.8-flash' : 'openai/gpt-oss-120b';
+    }
+
     get mode() {
         return this.cfg.SYSTEM1_GATE_MODE;
     }
 
     get configured() {
-        return Boolean((this.cfg.SYSTEM1_API_KEY || this.cfg.GROQ_API_KEY || '').trim());
+        return Boolean(this._keyFor(this.provider));
+    }
+
+    /** The first usable key for this provider. */
+    _keyFor(provider) {
+        if (provider === 'gemini') return (this.cfg.SYSTEM1_GEMINI_API_KEY || this.cfg.GEMINI_API_KEY || this.cfg.SYSTEM1_API_KEY || '').trim();
+        return (this.cfg.SYSTEM1_API_KEY || this.cfg.GROQ_API_KEY || '').trim();
     }
 
     _resetDay() {
@@ -160,15 +217,68 @@ export class System1Gate {
         }
     }
 
-    _key() {
-        return (this.cfg.SYSTEM1_API_KEY || this.cfg.GROQ_API_KEY || '').trim();
+    _post(url, body, opts = {}) {
+        if (this.http) return this.http.post(url, body, opts);
+        // Live path: import lazily so tests never need axios installed.
+        return import('axios').then(({ default: axios }) => axios.post(url, body, opts));
     }
 
-    _post(body) {
-        if (this.http) return this.http.post(API_URL, body, { timeout: this.cfg.SYSTEM1_TIMEOUT_MS });
-        // Live path: import lazily so tests never need axios installed.
-        return import('axios').then(({ default: axios }) =>
-            axios.post(API_URL, body, { timeout: this.cfg.SYSTEM1_TIMEOUT_MS }));
+    _sleep(ms) {
+        return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    /** Two Groq attempts: strict json_schema, then plain json object mode. */
+    _groqAttempts(key, model, d) {
+        const messages = [
+            { role: 'system', content: SYSTEM_PROMPT },
+            { role: 'user', content: buildState(d) },
+        ];
+        const base = { model, messages, temperature: 0, max_tokens: 120 };
+        // Auth must live in the request config — axios ignores a `headers` key
+        // inside the JSON body, which silently sent every prior call without
+        // a key and made both providers reject it (groq 401, gemini 400).
+        const opts = {
+            timeout: this.cfg.SYSTEM1_TIMEOUT_MS,
+            headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+        };
+        return [
+            {
+                url: GROQ_API_URL,
+                body: { ...base, response_format: { type: 'json_schema', json_schema: { name: 'system_one_verdict', strict: true, schema: VERDICT_SCHEMA } } },
+                opts,
+            },
+            {
+                url: GROQ_API_URL,
+                body: { ...base, response_format: { type: 'json_object' } },
+                opts,
+            },
+        ];
+    }
+
+    /** Two Gemini attempts: responseSchema-decoded JSON, then bare JSON mode. */
+    _geminiAttempts(key, model, d) {
+        const url = `${GEMINI_API_BASE}/${model}:generateContent`;
+        const opts = {
+            timeout: this.cfg.SYSTEM1_TIMEOUT_MS,
+            headers: { 'x-goog-api-key': key, 'Content-Type': 'application/json' },
+        };
+        const base = {
+            contents: [{ role: 'user', parts: [{ text: buildState(d) }] }],
+            systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+            generationConfig: { temperature: 0, maxOutputTokens: 200 },
+        };
+        return [
+            {
+                url,
+                body: { ...base, generationConfig: { ...base.generationConfig, responseMimeType: 'application/json', responseSchema: GEMINI_SCHEMA } },
+                opts,
+            },
+            {
+                url,
+                body: { ...base, generationConfig: { ...base.generationConfig, responseMimeType: 'application/json' } },
+                opts,
+            },
+        ];
     }
 
     /**
@@ -190,47 +300,48 @@ export class System1Gate {
             return null;
         }
         this.lastBudgetSkipped = false;
-        const key = this._key();
+        const provider = this.provider;
+        const key = this._keyFor(provider);
         if (!key) {
-            this.lastRun = { at: this.now(), ok: false, error: 'no SYSTEM1_API_KEY / GROQ_API_KEY set' };
+            const expect = provider === 'gemini' ? 'SYSTEM1_GEMINI_API_KEY (or GEMINI_API_KEY)' : 'SYSTEM1_API_KEY (or GROQ_API_KEY)';
+            this.lastRun = { at: this.now(), provider, ok: false, error: `no ${expect} set` };
             return null;
         }
         if (!d?.setup) return null;
 
-        const model = this.cfg.SYSTEM1_MODEL || 'openai/gpt-oss-120b';
+        const model = this.model;
         const started = this.now();
-        const body = {
-            model,
-            messages: [
-                { role: 'system', content: SYSTEM_PROMPT },
-                { role: 'user', content: buildState(d) },
-            ],
-            temperature: 0,
-            max_tokens: 120,
-            response_format: { type: 'json_schema', json_schema: { name: 'system_one_verdict', strict: true, schema: VERDICT_SCHEMA } },
-        };
-        const headers = { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' };
+        const attempts = provider === 'gemini' ? this._geminiAttempts(key, model, d) : this._groqAttempts(key, model, d);
 
         this.callsToday += 1;
         let text = null;
         try {
-            try {
-                const { data } = await this._post({ ...body, headers });
-                text = data?.choices?.[0]?.message?.content ?? '';
-            } catch (schemaErr) {
-                // Some models reject strict json_schema — retry as plain JSON mode.
-                this._log('debug', 'SCHEMA RETRY', String(schemaErr?.message || schemaErr));
-                const { data } = await this._post({
-                    ...body,
-                    headers,
-                    response_format: { type: 'json_object' },
-                });
-                text = data?.choices?.[0]?.message?.content ?? '';
+            // Each attempt shape is tried up to twice; transient spikes (5xx,
+            // 429, timeout, dropped connection) retry the same shape once after
+            // a short pause before moving to the relaxed shape. Non-transient
+            // errors move on immediately — they will not heal on a retry.
+        outer: for (let i = 0; i < attempts.length; i++) {
+                const { url, body, opts } = attempts[i];
+                for (let t = 0; t < 2; t++) {
+                    try {
+                        const { data } = await this._post(url, body, opts);
+                        text = extractText(provider, data);
+                        if (text) break outer;
+                    } catch (err) {
+                        if (isTransient(err) && t === 0) {
+                            this._log('debug', `${provider.toUpperCase()} RETRY`, `try 1/2 after ${String(err?.message || err).slice(0, 100)}`);
+                            await this._sleep(this.retryDelayMs);
+                            continue;
+                        }
+                        if (i === attempts.length - 1) throw err;
+                        continue outer; // next attempt shape (or give up quietly)
+                    }
+                }
             }
             const verdict = parseVerdict(text);
             if (!verdict) throw new Error('system1 reply did not parse to a verdict');
             this.consecutiveErrors = 0;
-            this.lastRun = { at: started, tookMs: this.now() - started, model, ok: true, verdict };
+            this.lastRun = { at: started, tookMs: this.now() - started, model, provider, ok: true, verdict };
             return verdict;
         } catch (err) {
             this.consecutiveErrors += 1;
@@ -239,7 +350,7 @@ export class System1Gate {
                 this.cooldownUntil = this.now() + cooldownMs;
                 this._log('warn', 'COOLDOWN SET', `system1 failed ${this.consecutiveErrors}x — cooling down ${Math.round(cooldownMs / 60000)}m`);
             }
-            this.lastRun = { at: started, ok: false, error: String(err?.message || err).slice(0, 200), model };
+            this.lastRun = { at: started, provider, ok: false, error: String(err?.message || err).slice(0, 200), model };
             this._log('warn', 'GATE OPINION', `system1 call failed: ${this.lastRun.error}`);
             return null;
         }
@@ -261,7 +372,7 @@ export class System1Gate {
                 if (!d.setup) continue;
                 const v = await this.ask(d);
                 if (!v) continue;
-                d.system1 = { ...v, model: this.cfg.SYSTEM1_MODEL || 'openai/gpt-oss-120b' };
+                d.system1 = { ...v, model: this.model };
                 if (mode !== 'on') continue;
                 const sideOk = (d.direction === 'LONG' && v.direction === 'buy') || (d.direction === 'SHORT' && v.direction === 'sell');
                 const strongEnough = v.conviction >= minConv;

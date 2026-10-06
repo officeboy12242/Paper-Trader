@@ -235,9 +235,10 @@ export function RiskConfig() {
     ]],
     ['AI gate', [['Mode', c.aiGateMode], ['Configured', c.aiConfigured ? 'yes' : 'no']]],
     ['System-1 AI gate (Jev/Laya-style)', [
-      ['Mode', `${c.system1?.mode ?? '—'} · vetoes below ${c.system1?.convictionMin ?? '—'}/100 conviction in “on”`],
+      ['Provider', `${c.system1?.provider ?? 'groq'} · ${c.system1?.mode ?? '—'} mode`],
       ['Model', c.system1?.model ?? '—'],
-      ['Configured', c.system1?.configured ? `yes${c.system1.lastRun?.model ? ` · last verdict ${c.system1.lastRun.ok ? `${c.system1.lastRun.verdict?.take ?? '?'} @ ${c.system1.lastRun.verdict?.conviction ?? '?'}/100` : `failed: ${(c.system1.lastRun.error || '').slice(0, 60)}`}` : ''}` : 'no — set SYSTEM1_API_KEY or GROQ_API_KEY'],
+      ['Configured', c.system1?.configured ? `yes${c.system1.lastRun?.model ? ` · last verdict ${c.system1.lastRun.ok ? `${c.system1.lastRun.verdict?.take ?? '?'} @ ${c.system1.lastRun.verdict?.conviction ?? '?'}/100` : `failed: ${(c.system1.lastRun.error || '').slice(0, 60)}`}` : ''}` : `no — set ${c.system1?.provider === 'gemini' ? 'SYSTEM1_GEMINI_API_KEY' : 'SYSTEM1_API_KEY'}`],
+      ['Veto rule', `below ${c.system1?.convictionMin ?? '—'}/100 conviction in “on”`],
       ['Calls today', `${c.system1?.callsToday ?? 0}${c.system1?.maxPerDay ? ` / ${c.system1.maxPerDay}` : ''}`],
       ['Faults', `${c.system1?.consecutiveErrors ?? 0} consecutive${c.system1?.cooldownActive ? ' · cooling down' : ''}`],
     ]],

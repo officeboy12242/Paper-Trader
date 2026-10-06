@@ -1,4 +1,4 @@
-# System-1 AI gate (Jev/Laya-style, powered by Groq)
+# System-1 AI gate (Jev/Laya-style, Groq or Gemini)
 
 The model does **not** analyse the market for you, and it does not write prose.
 It **votes**. Every setup that passes the rules is handed to the model as a
@@ -16,12 +16,14 @@ what Laya — its Apache-2.0 open clone
 ([convaiinnovations/laya](https://huggingface.co/convaiinnovations/laya)) — does.
 Laya itself cannot run in this deployment: nothing hosts it, and it needs
 ~1&nbsp;GB+ of RAM to serve, which the Render starter plan cannot afford. This
-gate reproduces the behaviour on **Groq**, which is already always-on:
+gate reproduces the behaviour on always-on hosted LLMs — **Groq** or **Gemini**
+(`SYSTEM1_PROVIDER`):
 
-- temperature 0, `max_tokens` 120, and a system prompt that forbids chain of
-  thought — the only thing it *can* emit is the verdict JSON;
-- the reply is constrained with JSON-schema strict decoding, retried as plain
-  JSON mode on models that reject the schema;
+- temperature 0, a tiny token budget, and a system prompt that forbids chain
+  of thought — the only thing the model *can* emit is the verdict JSON;
+- the reply is constrained with structured decoding: Groq JSON-schema strict,
+  Gemini `responseSchema`, both retried as plain JSON mode on models that
+  reject the schema;
 - it answers in well under a second, one call per accepted setup.
 
 ## Why a veto-gate and not "let the model trade"
@@ -53,6 +55,9 @@ older WA-BOT text LLM); this is the first AI layer they see.
 ## Failure never blocks trading
 
 - no key set → no opinion, quiet skip;
+- transient provider spikes (429/5xx/timeout/dropped connection) retry the
+  same request once after a short pause before falling through, so one burst
+  of "high demand" does not waste an opinion;
 - call fails → `consecutiveErrors` grows; after 3 in a row the gate cools down
   for `SYSTEM1_COOLDOWN_MS` and skips cleanly;
 - `SYSTEM1_MAX_PER_DAY` caps daily spend (a verdict per accepted setup is
@@ -62,10 +67,15 @@ older WA-BOT text LLM); this is the first AI layer they see.
 
 ## Keys
 
-- `SYSTEM1_API_KEY` — dedicated key for this gate only.
-- `GROQ_API_KEY` — shared with the existing AI gate; the System-1 gate uses it
-  when `SYSTEM1_API_KEY` is unset. Note it also turns the NSE text-LLM gate on
-  (`aiConfigured`), because that is the same key the original router reads.
+Provider is chosen by `SYSTEM1_PROVIDER` (`groq` | `gemini`), and the key is
+resolved per provider:
+
+- **groq** — `SYSTEM1_API_KEY` (dedicated), falling back to `GROQ_API_KEY`
+  (which also turns the NSE text-LLM gate on, because that is the same key the
+  original router reads). Default model `openai/gpt-oss-120b`.
+- **gemini** — `SYSTEM1_GEMINI_API_KEY` (dedicated), falling back to
+  `GEMINI_API_KEY`, then `SYSTEM1_API_KEY`. Default model `gemini-3.8-flash`.
+- `SYSTEM1_MODEL` overrides the default for whichever provider is active.
 
 ## Where the verdicts go
 
@@ -80,9 +90,11 @@ earned it on data.
 | Env | Default | Meaning |
 |---|---|---|
 | `SYSTEM1_GATE_MODE` | `shadow` | `off` · `shadow` · `on` |
-| `SYSTEM1_MODEL` | `openai/gpt-oss-120b` | any Groq-hosted model (`qwen/qwen3.8-27b`, `llama-3.3-70b-versatile`, …) |
+| `SYSTEM1_PROVIDER` | `groq` | `groq` · `gemini` — which always-on API answers the verdicts |
+| `SYSTEM1_MODEL` | unset | provider default (`openai/gpt-oss-120b` on groq, `gemini-3.8-flash` on gemini); set any hosted model to override |
 | `SYSTEM1_CONVICTION_MIN` | `60` | minimum conviction for a pass in `on` |
 | `SYSTEM1_TIMEOUT_MS` | `15000` | per-call bound |
 | `SYSTEM1_MAX_PER_DAY` | `120` | daily call budget (0 = unlimited) |
 | `SYSTEM1_COOLDOWN_MS` | `600000` | pause after 3 consecutive failures |
-| `SYSTEM1_API_KEY` | unset | dedicated key (falls back to `GROQ_API_KEY`) |
+| `SYSTEM1_API_KEY` | unset | dedicated Groq key (falls back to `GROQ_API_KEY`) |
+| `SYSTEM1_GEMINI_API_KEY` | unset | dedicated Gemini key (falls back to `GEMINI_API_KEY`, then `SYSTEM1_API_KEY`) |

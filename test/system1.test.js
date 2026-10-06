@@ -1,5 +1,6 @@
-// System-1 decision gate (Jev/Laya-style on Groq): typed verdict parsing,
-// shadow/off/on semantics, veto reasons, budget, cooldown and the trader hook.
+// System-1 decision gate (Jev/Laya-style, Groq or Gemini): typed verdict
+// parsing, shadow/off/on semantics, veto reasons, budget, cooldown and the
+// trader hook.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseVerdict, buildState, VERDICT_SCHEMA, SYSTEM_PROMPT, System1Gate } from '../src/ml/system1.js';
@@ -12,12 +13,14 @@ const now = () => 1_800_000_000_000; // 2027-01-15ish, fixed for a day-key check
 
 const baseCfg = {
     SYSTEM1_GATE_MODE: 'shadow',
+    SYSTEM1_PROVIDER: 'groq',
     SYSTEM1_MODEL: 'openai/gpt-oss-120b',
     SYSTEM1_CONVICTION_MIN: 60,
     SYSTEM1_TIMEOUT_MS: 5000,
     SYSTEM1_MAX_PER_DAY: 0,
     SYSTEM1_COOLDOWN_MS: 0,
     SYSTEM1_API_KEY: '',
+    SYSTEM1_GEMINI_API_KEY: '',
     GROQ_API_KEY: 'test-key',
 };
 
@@ -46,7 +49,7 @@ function httpVia(content) {
     return http;
 }
 
-const gate = (http, cfgOver = {}) => new System1Gate({ cfg: { ...baseCfg, ...cfgOver }, logger: nullLogger, now, http });
+const gate = (http, cfgOver = {}, gateOver = {}) => new System1Gate({ cfg: { ...baseCfg, ...cfgOver }, logger: nullLogger, now, http, retryDelayMs: 0, ...gateOver });
 
 // ── verdict parsing ─────────────────────────────────────────────────────────
 
@@ -120,7 +123,8 @@ test('strict JSON-schema request shape + auth on the live call', async () => {
     assert.equal(body.response_format.json_schema.strict, true);
     assert.equal(body.response_format.json_schema.schema, VERDICT_SCHEMA);
     assert.equal(opts.timeout, 5000);
-    assert.equal(body.headers.Authorization, 'Bearer test-key');
+    assert.equal(opts.headers.Authorization, 'Bearer test-key');
+    assert.equal(body.headers, undefined);
 });
 
 test('falls back to plain json_object when the schema path is rejected', async () => {
@@ -256,6 +260,125 @@ test('non-PASS decisions are never scored', async () => {
     assert.equal(d.system1, undefined);
 });
 
+// ── Gemini provider ─────────────────────────────────────────────────────────
+
+/** http mock speaking Gemini's response shape. */
+function geminiVia(content) {
+    const calls = [];
+    const http = {
+        calls,
+        async post(url, body, opts) {
+            calls.push({ url, body, opts });
+            if (content instanceof Error) throw content;
+            return { data: { candidates: [{ content: { parts: [{ text: content }] } }] } };
+        },
+    };
+    return http;
+}
+
+test('gemini: responseSchema request shape + auth header + verdict extraction', async () => {
+    const http = geminiVia('{"take":"yes","direction":"buy","conviction":80,"noul":"confirm"}');
+    const g = gate(http, { SYSTEM1_PROVIDER: 'gemini', SYSTEM1_GEMINI_API_KEY: 'gm-test-key', SYSTEM1_MODEL: '' });
+    const verdict = await g.ask(pass());
+    assert.equal(g.provider, 'gemini');
+    assert.equal(g.model, 'gemini-3.8-flash');
+    assert.deepEqual(verdict, { take: 'yes', direction: 'buy', conviction: 80, noul: 'confirm' });
+    assert.equal(http.calls.length, 1);
+    const { url, body, opts } = http.calls[0];
+    assert.match(url, /generativelanguage\.googleapis\.com\/v1beta\/models\/gemini-3\.8-flash:generateContent$/);
+    assert.equal(opts.headers['x-goog-api-key'], 'gm-test-key');
+    assert.equal(opts.headers.Authorization, undefined);
+    assert.equal(body.headers, undefined);
+    assert.equal(body.generationConfig.temperature, 0);
+    assert.equal(body.generationConfig.maxOutputTokens, 200);
+    assert.equal(body.generationConfig.responseMimeType, 'application/json');
+    assert.equal(body.generationConfig.responseSchema.type, 'OBJECT');
+    assert.deepEqual(body.generationConfig.responseSchema.properties.take.enum, ['yes', 'no', 'noul']);
+    assert.deepEqual(body.generationConfig.responseSchema.properties.conviction, { type: 'INTEGER' });
+    assert.match(body.contents[0].parts[0].text, /proposed long trade/);
+    assert.match(body.systemInstruction.parts[0].text, /System 1 decision model/);
+    assert.equal(opts.timeout, 5000);
+});
+
+test('gemini: relaxed JSON mode retry when responseSchema is rejected', async () => {
+    let n = 0;
+    const seen = [];
+    const http = {
+        async post(url, body) {
+            n += 1;
+            seen.push({ url, body });
+            if (n === 1) throw new Error('responseSchema not supported for this model');
+            return { data: { candidates: [{ content: { parts: [{ text: '{"take":"no","direction":"sell","conviction":20,"noul":"deny"}' }] } }] } };
+        },
+    };
+    const g = gate(http, { SYSTEM1_PROVIDER: 'gemini', SYSTEM1_GEMINI_API_KEY: 'gm-test-key' });
+    const v = await g.ask(pass());
+    assert.equal(n, 2);
+    assert.deepEqual(v, { take: 'no', direction: 'sell', conviction: 20, noul: 'deny' });
+    assert.equal(seen[1].body.generationConfig.responseSchema, undefined);
+    assert.equal(seen[1].body.generationConfig.responseMimeType, 'application/json');
+    assert.equal(g.consecutiveErrors, 0);
+});
+
+test('gemini: on-mode veto works over the gemini verdict too', async () => {
+    const http = geminiVia('{"take":"yes","direction":"buy","conviction":40,"noul":"confirm"}');
+    const g = gate(http, { SYSTEM1_PROVIDER: 'gemini', SYSTEM1_GEMINI_API_KEY: 'gm-test-key', SYSTEM1_GATE_MODE: 'on' });
+    const d = pass();
+    await g.apply([d]);
+    assert.equal(d.decision, 'REJECT');
+    assert.match(d.reason, /conviction 40 < 60/);
+});
+
+test('a transient 503 is retried once on the same attempt shape before giving up', async () => {
+    let n = 0;
+    const http = {
+        async post(url, body) {
+            n += 1;
+            if (n === 1) throw Object.assign(new Error('503 high demand'), { response: { status: 503 } });
+            if (n === 2) return { data: { choices: [{ message: { content: '{"take":"yes","direction":"buy","conviction":71,"noul":"confirm"}' } }] } };
+            throw new Error(`unexpected extra call #${n}`);
+        },
+    };
+    const g = gate(http);
+    const v = await g.ask(pass());
+    assert.equal(n, 2, 'exactly one retry on the strict attempt, then success');
+    assert.deepEqual(v, { take: 'yes', direction: 'buy', conviction: 71, noul: 'confirm' });
+    assert.equal(g.consecutiveErrors, 0);
+});
+
+test('persistent 5xx across both attempts still degrades to no opinion', async () => {
+    let n = 0;
+    const http = {
+        async post() {
+            n += 1;
+            throw Object.assign(new Error('503 high demand'), { response: { status: 503 } });
+        },
+    };
+    const g = gate(http);
+    const v = await g.ask(pass());
+    assert.equal(v, null);
+    assert.equal(n, 4, '2 tries x 2 attempt shapes');
+    assert.equal(g.consecutiveErrors, 1);
+    assert.equal(g.lastRun.ok, false);
+});
+
+test('gemini provider resolution: key sources + model defaults', () => {
+    // dedicated key wins
+    assert.equal(gate(null, { SYSTEM1_PROVIDER: 'gemini', SYSTEM1_GEMINI_API_KEY: 'k' }).configured, true);
+    // GEMINI_API_KEY fallback
+    assert.equal(gate(null, { SYSTEM1_PROVIDER: 'gemini', GEMINI_API_KEY: 'k' }).configured, true);
+    // generic SYSTEM1_API_KEY fallback
+    assert.equal(gate(null, { SYSTEM1_PROVIDER: 'gemini', SYSTEM1_API_KEY: 'k' }).configured, true);
+    // no gemini key source at all
+    assert.equal(gate(null, { SYSTEM1_PROVIDER: 'gemini', SYSTEM1_GEMINI_API_KEY: '', GEMINI_API_KEY: '', SYSTEM1_API_KEY: '' }).configured, false);
+    // provider default models
+    assert.equal(gate(null, { SYSTEM1_MODEL: '' }).model, 'openai/gpt-oss-120b');
+    assert.equal(gate(null, { SYSTEM1_PROVIDER: 'gemini', SYSTEM1_MODEL: '' }).model, 'gemini-3.8-flash');
+    // explicit override respected
+    assert.equal(gate(null, { SYSTEM1_PROVIDER: 'gemini', SYSTEM1_MODEL: 'gemini-2.5-flash' }).model, 'gemini-2.5-flash');
+    assert.equal(gate(null, { SYSTEM1_MODEL: 'llama-3.3-70b-versatile' }).model, 'llama-3.3-70b-versatile');
+});
+
 // ── trader hook ─────────────────────────────────────────────────────────────
 
 test('trader._applySystem1Gate forwards decisions to the shared gate and survives a missing gate', async () => {
@@ -288,10 +411,22 @@ test('trader._applySystem1Gate forwards decisions to the shared gate and survive
 test('system1 knobs and publicConfig block exist', () => {
     const cfg = loadConfig();
     assert.equal(cfg.SYSTEM1_GATE_MODE, 'shadow');
+    assert.ok(['groq', 'gemini'].includes(cfg.SYSTEM1_PROVIDER), 'provider is groq or gemini');
     assert.equal(cfg.SYSTEM1_CONVICTION_MIN, 60);
-    assert.equal(cfg.SYSTEM1_MODEL, 'openai/gpt-oss-120b');
+    assert.equal(typeof cfg.SYSTEM1_MODEL, 'string');
+    assert.equal(typeof cfg.SYSTEM1_GEMINI_API_KEY, 'string');
     const pub = publicConfig(cfg);
-    assert.equal(pub.system1.mode, 'shadow');
-    assert.equal(pub.system1.model, 'openai/gpt-oss-120b');
-    assert.equal(pub.system1.configured, false);
+    assert.equal(pub.system1.provider, cfg.SYSTEM1_PROVIDER);
+    assert.equal(pub.system1.mode, cfg.SYSTEM1_GATE_MODE);
+    const expectedModel = cfg.SYSTEM1_PROVIDER === 'gemini' ? 'gemini-3.8-flash' : 'openai/gpt-oss-120b';
+    assert.equal(pub.system1.model, expectedModel);
+    assert.equal(typeof pub.system1.configured, 'boolean');
+    // a gemini provider with a key resolves its own model + configured state
+    const gpub = publicConfig({ ...cfg, SYSTEM1_PROVIDER: 'gemini', SYSTEM1_GEMINI_API_KEY: 'k' });
+    assert.equal(gpub.system1.model, 'gemini-3.8-flash');
+    assert.equal(gpub.system1.configured, true);
+    // the groq key path is unchanged
+    const qpub = publicConfig({ ...cfg, SYSTEM1_PROVIDER: 'groq', SYSTEM1_API_KEY: 'k' });
+    assert.equal(qpub.system1.model, 'openai/gpt-oss-120b');
+    assert.equal(qpub.system1.configured, true);
 });

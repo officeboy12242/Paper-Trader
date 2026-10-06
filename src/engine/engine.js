@@ -422,9 +422,10 @@ export class Engine {
                 ...this.ml.status,
             },
             system1: {
+                provider: this.system1.provider,
                 mode: this.cfg.SYSTEM1_GATE_MODE,
                 configured: this.system1.configured,
-                model: this.cfg.SYSTEM1_MODEL,
+                model: this.system1.model,
                 callsToday: this.system1.callsToday,
                 maxPerDay: this.cfg.SYSTEM1_MAX_PER_DAY,
                 consecutiveErrors: this.system1.consecutiveErrors,
