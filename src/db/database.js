@@ -408,10 +408,11 @@ export class Database {
         this.db
             .prepare(
                 `UPDATE trades SET stop_loss_price = ?, trailing_active = ?, trailing_stop = ?, trail_from_ts = ?, high_water = ?,
-                    last_price = ?, last_price_time = ?, last_bar_ts = ?, updated_at = ? WHERE id = ? AND status = 'OPEN'`
+                    profit_booked = ?, last_price = ?, last_price_time = ?, last_bar_ts = ?, updated_at = ? WHERE id = ? AND status = 'OPEN'`
             )
             .run(
                 t.stop_loss_price, t.trailing_active ? 1 : 0, t.trailing_stop ?? null, t.trail_from_ts ?? null, t.high_water ?? null,
+                t.profit_booked ? 1 : 0,
                 t.last_price ?? null, t.last_price_time ?? null, t.last_bar_ts ?? null, Date.now(), t.id
             );
     }

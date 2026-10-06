@@ -53,14 +53,14 @@ export class FakeFeed {
 
 export const fakeLots = { resolve: (s) => ({ lotSize: s === 'RELIANCE' ? 500 : 100, source: 'test' }), refresh: async () => {} };
 
-export function makeWorld(cfgOverrides = {}, { file = ':memory:' } = {}) {
+export function makeWorld(cfgOverrides = {}, { file = ':memory:', strategyById = () => null } = {}) {
     const cfg = makeCfg(cfgOverrides);
     const clock = new Clock(at('10:00'));
     const db = new Database(file);
     const feed = new FakeFeed(clock);
     const marketData = new MarketDataService({ cfg, logger: nullLogger, fetchCandles: feed.fetchCandles, now: clock.now, retries: 0, retryDelayMs: 0 });
     const closed = [];
-    const positions = new PositionManager({ db, cfg, adapter: createExecutionAdapter(cfg), logger: nullLogger, marketData, lotSizes: fakeLots, now: clock.now, onTradeClosed: (t) => closed.push(t) });
+    const positions = new PositionManager({ db, cfg, adapter: createExecutionAdapter(cfg), logger: nullLogger, marketData, lotSizes: fakeLots, now: clock.now, onTradeClosed: (t) => closed.push(t), strategyById });
     const sid = db.upsertStrategy({ key: 'test', code: 'Strategy-01', name: 'Test', source: 'test', sourceFiles: '', description: '', enabled: true });
     return { cfg, clock, db, feed, marketData, positions, sid, closed };
 }

@@ -15,7 +15,7 @@
  * and hit the same stop.
  */
 
-import { LONG, dirSign, finalizeLevels, activateTrailing, ratchetTrailing, grossPnl, round2 } from './risk.js';
+import { LONG, dirSign, finalizeLevels, activateTrailing, ratchetTrailing, tighterStop, grossPnl, round2 } from './risk.js';
 import { roundTripFees } from './fees.js';
 import { validateSignal } from './signals.js';
 import { istTimestamp, sessionDate } from '../market/clock.js';
@@ -269,18 +269,24 @@ export class PositionManager {
                 }
 
                 // Profit booking: once unrealized profit reaches PROFIT_BOOK_INR,
-                // lock it — the stop moves to entry + booking level so a winner
-                // can never become a loser. Only for the 24h gold/ETH traders.
+                // lock it — the stop moves to the price where that profit is
+                // banked, so a winner can never become a loser. Tested against
+                // the bar's best price (not its close) so an intra-bar spike
+                // counts. Only for the 24h gold/ETH traders (INR-settled).
                 if (roundTheClock && !trade.profit_booked && this.cfg.PROFIT_BOOK_INR > 0) {
                     const rate = this.cfg.INR_USD_RATE || 84;
-                    const unrealized = grossPnl(trade.direction, trade.entry_price, bar.close, trade.quantity) * rate;
+                    const best = d > 0 ? bar.high : bar.low;
+                    const unrealized = grossPnl(trade.direction, trade.entry_price, best, trade.quantity) * rate;
                     if (unrealized >= this.cfg.PROFIT_BOOK_INR) {
-                        const lock = round2(trade.entry_price + (d * this.cfg.PROFIT_BOOK_INR) / trade.quantity);
-                        const newStop = tighterStop(trade.direction, trade.stop_loss_price, lock);
-                        if (newStop !== trade.stop_loss_price) {
-                            Object.assign(trade, { stop_loss_price: newStop, trailing_stop: newStop, profit_booked: 1 });
-                            changed = true;
-                            this.logger.info(code, 'PROFIT BOOKED', `${trade.symbol} ₹${this.cfg.PROFIT_BOOK_INR} locked, stop -> ${newStop}`);
+                        // ₹ -> quote-currency points: booking level is in ₹, the
+                        // stop lives in $, so the size must be scaled by rate.
+                        const lock = round2(trade.entry_price + (d * this.cfg.PROFIT_BOOK_INR) / (trade.quantity * rate));
+                        const prev = trade.stop_loss_price;
+                        const newStop = tighterStop(trade.direction, prev, lock);
+                        Object.assign(trade, { stop_loss_price: newStop, trailing_stop: newStop, profit_booked: 1 });
+                        changed = true;
+                        if (newStop !== prev) {
+                            this.logger.info(code, 'PROFIT BOOKED', `${trade.symbol} ₹${this.cfg.PROFIT_BOOK_INR} locked, stop ${prev} -> ${newStop}`);
                             this.db.insertEvent({ strategyId: trade.strategy_id, tradeId: trade.id, ts: bar.ts, type: 'PROFIT_BOOKED', price: newStop, message: `₹${this.cfg.PROFIT_BOOK_INR} profit locked` });
                         }
                     }

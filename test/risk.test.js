@@ -1,7 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { makeCfg, makeWorld, place, bar } from './helpers.js';
 import { finalizeLevels, activateTrailing, ratchetTrailing, hardStopFor } from '../src/engine/risk.js';
+import { Database } from '../src/db/database.js';
 
 const cfg = makeCfg({ SLIPPAGE_BPS: 0 });
 
@@ -158,6 +162,61 @@ test('trailing: target arms the trail, price runs, reversal exits at the trailin
     const ev = w.db.listEvents({ tradeId: t.id }).map((e) => e.type);
     assert.ok(ev.includes('TRAILING_ACTIVATED'));
     assert.ok(ev.includes('TRAIL_RAISED'));
+});
+
+test('PROFIT_BOOK_INR locks a 24h trade at the price that banks it (₹, not $)', async () => {
+    const w = makeWorld(
+        { SLIPPAGE_BPS: 0, PROFIT_BOOK_INR: 2000, INR_USD_RATE: 84 },
+        { strategyById: () => ({ roundTheClock: true, key: 'gold_sweep' }) },
+    );
+    // The lock is gated by roundTheClock, not by symbol. A spot symbol would
+    // bypass the fake feed (getBars hits the real gold API for those), so the
+    // contract is exercised on an NSE symbol with a 24h strategy attached.
+    place(w, { symbol: 'SBIN', direction: 'LONG', orderType: 'MARKET', referencePrice: 4000, entry: 4000, stop: 3985, target: 4100 });
+    w.feed.set('SBIN', [
+        bar('10:01', 4000, 4000.6, 3999.5, 4000.5), // fills at 4000, +$0.60 = ₹5,040 on qty 100
+        bar('10:02', 4000.5, 4001, 4000.4, 4000.9), // holds above the new stop
+        bar('10:03', 4000.9, 4001.2, 4000.5, 4001),
+    ]);
+    w.clock.set('10:04');
+    await w.positions.monitor();
+
+    const t = w.db.searchTrades({}).rows[0];
+    assert.equal(t.status, 'OPEN', 'the lock tightens, it does not close');
+    assert.equal(t.profit_booked, 1, 'flag persists for the rest of the trade');
+    //  ₹2,000 / (qty 100 x rate 84) = $0.2381 above entry, NOT ₹2,000 / qty = $20.
+    assert.equal(t.stop_loss_price, 4000.24);
+    assert.ok(t.stop_loss_price > t.entry_price, 'stop sits in profit for a LONG');
+    const ev = w.db.listEvents({}).map((e) => e.type);
+    assert.ok(ev.includes('PROFIT_BOOKED'), `events were ${ev.join(', ')}`);
+    assert.ok(ev.includes('ORDER_PLACED'));
+});
+
+test('the profit lock survives a restart instead of being re-derived', async () => {
+    const file = path.join(os.tmpdir(), `profit-lock-${Date.now()}-${process.pid}.db`);
+    const w = makeWorld(
+        { SLIPPAGE_BPS: 0, PROFIT_BOOK_INR: 2000, INR_USD_RATE: 84 },
+        { file, strategyById: () => ({ roundTheClock: true, key: 'eth_sweep' }) },
+    );
+    place(w, { symbol: 'TCS', direction: 'SHORT', orderType: 'MARKET', referencePrice: 2700, entry: 2700, stop: 2710, target: 2650 });
+    w.feed.set('TCS', [
+        bar('10:01', 2700, 2700.5, 2696, 2696.5), // -$3.50 on qty 100 = ₹29,400
+        bar('10:02', 2696.5, 2697, 2695, 2695.5),
+    ]);
+    w.clock.set('10:03');
+    await w.positions.monitor();
+
+    const reopened = new Database(file);
+    const row = reopened.openTrades()[0];
+    assert.equal(row.profit_booked, 1, 'profit_booked is written to the database');
+    // ₹2,000 / (qty 100 x rate 84) = $0.2381 below the 2700 entry.
+    assert.equal(row.stop_loss_price, 2699.76, 'SHORT locks below entry in ₹ terms');
+    // Cleanup must never mask an assertion above.
+    try { reopened.close(); } catch { /* already closed */ }
+    try { w.db.close(); } catch { /* already closed */ }
+    for (const suffix of ['', '-wal', '-shm']) {
+        try { fs.rmSync(`${file}${suffix}`, { force: true }); } catch { /* best effort */ }
+    }
 });
 
 test('end-of-day square-off closes every intraday position', async () => {
