@@ -7,5 +7,6 @@ node_modules/
 *.db
 *.db-wal
 *.db-shm
-# Vite build output (rebuilt on deploy via `npm run build`)
-src/web/public/app/
+# The Vite build output IS committed: if a host ever skips the build step the
+# dashboard still serves instead of returning 404. Every `npm install` (which
+# runs `postinstall`) and every `npm run build` rewrites it in place.
