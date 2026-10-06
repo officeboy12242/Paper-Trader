@@ -1,0 +1,25 @@
+# systemd unit for a Linux VPS.
+#   sudo cp deploy/linux/papertrader.service /etc/systemd/system/
+#   sudo sed -i 's#/opt/papertrader#<your path>#g; s#User=papertrader#User=<your user>#' /etc/systemd/system/papertrader.service
+#   sudo systemctl daemon-reload && sudo systemctl enable --now papertrader
+#   journalctl -u papertrader -f
+[Unit]
+Description=PaperTrader multi-strategy PAPER trading engine (no live orders)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=papertrader
+WorkingDirectory=/opt/papertrader
+ExecStart=/usr/bin/node src/index.js
+Restart=always
+RestartSec=5
+KillSignal=SIGINT
+TimeoutStopSec=35
+Environment=NODE_ENV=production
+# NSE expects an Indian clock and often blocks foreign datacentre IPs;
+# set NSE_PROXY_URL or SCRAPER_API_KEY in .env if the VPS is outside India.
+
+[Install]
+WantedBy=multi-user.target

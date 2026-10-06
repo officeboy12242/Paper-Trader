@@ -1,0 +1,11 @@
+node_modules/
+.env
+data/
+logs/
+bot.log
+STOP
+*.db
+*.db-wal
+*.db-shm
+# Vite build output (rebuilt on deploy via `npm run build`)
+src/web/public/app/

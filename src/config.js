@@ -1,0 +1,277 @@
+/**
+ * Central configuration. Every value comes from the environment (.env) with a
+ * documented default. Secrets are read here and never leave the process: the
+ * dashboard only ever receives `publicConfig()`.
+ *
+ * SAFETY: this build has no live execution path. PAPER_TRADING must be true and
+ * LIVE_TRADING is a constant, not a setting.
+ */
+
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import dotenv from 'dotenv';
+
+export const ROOT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+dotenv.config({ path: path.join(ROOT_DIR, '.env') });
+
+// The vendored WA-BOT modules build a pino logger at import time from
+// process.env.LOG_LEVEL, and pino only accepts lowercase names. Our own log
+// level is read first, then the env var is rewritten for the vendor logger.
+// The original value is kept in PAPERTRADER_LOG_LEVEL so the rewrite does not
+// leak into child processes (or a second import) as our own level.
+const OWN_LOG_LEVEL = String(process.env.PAPERTRADER_LOG_LEVEL || process.env.LOG_LEVEL || 'INFO').toUpperCase();
+process.env.PAPERTRADER_LOG_LEVEL = OWN_LOG_LEVEL;
+process.env.LOG_LEVEL = String(process.env.VENDOR_LOG_LEVEL || 'warn').toLowerCase();
+
+/** Live trading is not implemented in this build. Not configurable. */
+export const LIVE_TRADING_ENABLED = false;
+
+const num = (name, def, { min = -Infinity, max = Infinity } = {}) => {
+    const raw = process.env[name];
+    if (raw === undefined || String(raw).trim() === '') return def;
+    const n = Number(raw);
+    if (!Number.isFinite(n)) throw new Error(`Config ${name} must be a number (got "${raw}")`);
+    if (n < min || n > max) throw new Error(`Config ${name}=${n} out of range [${min}, ${max}]`);
+    return n;
+};
+
+const bool = (name, def) => {
+    const raw = process.env[name];
+    if (raw === undefined || String(raw).trim() === '') return def;
+    return !/^(false|0|no|off)$/i.test(String(raw).trim());
+};
+
+const str = (name, def) => {
+    const raw = process.env[name];
+    return raw === undefined || String(raw).trim() === '' ? def : String(raw).trim();
+};
+
+const oneOf = (name, def, allowed) => {
+    const v = str(name, def).toLowerCase();
+    if (!allowed.includes(v)) throw new Error(`Config ${name} must be one of ${allowed.join('|')} (got "${v}")`);
+    return v;
+};
+
+const hhmm = (name, def) => {
+    const v = str(name, def);
+    if (!/^\d{1,2}:\d{2}$/.test(v)) throw new Error(`Config ${name} must be HH:MM (got "${v}")`);
+    return v;
+};
+
+function parseWeights(raw) {
+    const out = { netPnl: 0.35, profitFactor: 0.25, winRate: 0.15, drawdown: 0.15, trades: 0.1 };
+    if (!raw) return out;
+    for (const part of String(raw).split(',')) {
+        const [k, v] = part.split(':').map((s) => s.trim());
+        if (!(k in out)) throw new Error(`RANK_WEIGHTS: unknown metric "${k}" (allowed ${Object.keys(out).join(', ')})`);
+        const n = Number(v);
+        if (!Number.isFinite(n) || n < 0) throw new Error(`RANK_WEIGHTS: bad weight for ${k}`);
+        out[k] = n;
+    }
+    return out;
+}
+
+function databasePath(url) {
+    const raw = url.replace(/^sqlite:/, '').replace(/^file:/, '');
+    if (raw === ':memory:') return raw;
+    return path.isAbsolute(raw) ? raw : path.join(ROOT_DIR, raw);
+}
+
+export function loadConfig() {
+    const paper = bool('PAPER_TRADING', true);
+    if (!paper) {
+        throw new Error(
+            'PAPER_TRADING=false is not supported. This build has no live execution adapter; ' +
+                'set PAPER_TRADING=true.'
+        );
+    }
+
+    const cfg = {
+        PAPER_TRADING: true,
+        LIVE_TRADING_ENABLED,
+
+        // Position sizing. 1 lot per trade, never scaled by confidence or balance.
+        LOT_SIZE: num('LOT_SIZE', 1, { min: 1, max: 100 }),
+
+        // Risk overlay applied on top of each source's own levels.
+        MIN_TARGET: num('MIN_TARGET', 10, { min: 0 }),
+        MIN_TARGET_UNIT: oneOf('MIN_TARGET_UNIT', 'points', ['points', 'rupees', 'percent']),
+        STOP_LOSS_PERCENT: num('STOP_LOSS_PERCENT', 5, { min: 0.1, max: 5 }),
+        TRAILING_ENABLED: bool('TRAILING_ENABLED', true),
+        TRAIL_DISTANCE: num('TRAIL_DISTANCE', 0.5, { min: 0.01 }),
+        TRAIL_DISTANCE_UNIT: oneOf('TRAIL_DISTANCE_UNIT', 'percent', ['percent', 'points', 'r']),
+        TRAIL_LOCK_PCT: num('TRAIL_LOCK_PCT', 100, { min: 0, max: 100 }),
+
+        // Session handling (IST). Entries stop at ENTRY_CUTOFF; everything is
+        // squared off at EOD_SQUARE_OFF because every source is intraday.
+        MARKET_TZ: 'Asia/Kolkata',
+        SESSION_OPEN: hhmm('SESSION_OPEN', '09:15'),
+        ENTRY_CUTOFF: hhmm('ENTRY_CUTOFF', '15:00'),
+        EOD_SQUARE_OFF: hhmm('EOD_SQUARE_OFF', '15:20'),
+
+        // Scheduling. First scan per source follows the original WA-BOT clocks.
+        TRADE_ALERT_TIME: hhmm('TRADE_ALERT_TIME', '09:20'),
+        TRADE_ALERT_MORNING_VOLATILITY_TIME: str('TRADE_ALERT_MORNING_VOLATILITY_TIME', '09:35'),
+        TRADE_ALERT_HEATMAP2_TIMES: str('TRADE_ALERT_HEATMAP2_TIMES', ''),
+        TRADE_ALERT_PREOPEN_TIME: str('TRADE_ALERT_PREOPEN_TIME', ''),
+        TRADE_ALERT_TURNOVER_TIME: str('TRADE_ALERT_TURNOVER_TIME', ''),
+        SCAN_INTERVAL_MINUTES: num('SCAN_INTERVAL_MINUTES', 15, { min: 0, max: 120 }),
+        PRICE_POLL_SECONDS: num('PRICE_POLL_SECONDS', 30, { min: 5, max: 300 }),
+        SCHEDULER_TICK_SECONDS: num('SCHEDULER_TICK_SECONDS', 20, { min: 5, max: 120 }),
+
+        // Original daily cap (TRADE_ALERT_MAX_SENDS) applied per strategy.
+        MAX_TRADES_PER_STRATEGY_PER_DAY: num('MAX_TRADES_PER_STRATEGY_PER_DAY', num('TRADE_ALERT_MAX_SENDS', 20), { min: 1, max: 50 }),
+        ALLOW_DUPLICATE_POSITIONS: bool('ALLOW_DUPLICATE_POSITIONS', false),
+        SOFT_FALLBACK: bool('TRADE_ALERT_DAILY_SOFT_FALLBACK', true),
+
+        // AI gate: 'auto' turns on the original LLM check as soon as a key exists.
+        AI_GATE_MODE: oneOf('AI_GATE_MODE', 'auto', ['auto', 'off']),
+        // NSE sources trade CE/PE option premiums (ATM leg) instead of the underlying.
+        NSE_TRADE_OPTIONS: bool('NSE_TRADE_OPTIONS', true),
+        // Option premium risk scale (premiums need wider room than equity).
+        NSE_OPTION_STOP_PCT: num('NSE_OPTION_STOP_PCT', 30, { min: 1, max: 90 }),
+        NSE_OPTION_MIN_TARGET_PCT: num('NSE_OPTION_MIN_TARGET_PCT', 20, { min: 1, max: 500 }),
+        NSE_OPTION_TRAIL_PCT: num('NSE_OPTION_TRAIL_PCT', 3, { min: 0.1, max: 50 }),
+        // Risk controls: short cooldown after a stop-loss, and a daily loss limit per strategy.
+        STRATEGY_COOLDOWN_MINUTES: num('STRATEGY_COOLDOWN_MINUTES', 5, { min: 0, max: 1440 }),
+        DAILY_LOSS_LIMIT_INR: num('DAILY_LOSS_LIMIT_INR', 15000, { min: 0 }),
+
+        // Execution simulation.
+        SLIPPAGE_BPS: num('SLIPPAGE_BPS', 2, { min: 0, max: 200 }),
+        FEE_BROKERAGE_FLAT: num('FEE_BROKERAGE_FLAT', 20, { min: 0 }),
+        FEE_BROKERAGE_PCT: num('FEE_BROKERAGE_PCT', 0.03, { min: 0 }),
+        FEE_STT_SELL_PCT: num('FEE_STT_SELL_PCT', 0.02, { min: 0 }),
+        FEE_EXCHANGE_PCT: num('FEE_EXCHANGE_PCT', 0.00173, { min: 0 }),
+        FEE_SEBI_PER_CRORE: num('FEE_SEBI_PER_CRORE', 10, { min: 0 }),
+        FEE_STAMP_BUY_PCT: num('FEE_STAMP_BUY_PCT', 0.002, { min: 0 }),
+        FEE_GST_PCT: num('FEE_GST_PCT', 18, { min: 0 }),
+        LOT_SIZE_SOURCE: oneOf('LOT_SIZE_SOURCE', 'nse', ['nse', 'repo']),
+
+        // Statistics and ranking.
+        CAPITAL_PER_STRATEGY: num('CAPITAL_PER_STRATEGY', 500000, { min: 1 }),
+        RANK_WEIGHTS: parseWeights(process.env.RANK_WEIGHTS),
+        RANK_PF_CAP: num('RANK_PF_CAP', 3, { min: 1 }),
+        RANK_DD_CAP_PCT: num('RANK_DD_CAP_PCT', 20, { min: 1 }),
+        RANK_FULL_SAMPLE_TRADES: num('RANK_FULL_SAMPLE_TRADES', 30, { min: 1 }),
+
+        // Infrastructure.
+        DATABASE_URL: str('DATABASE_URL', 'sqlite:./data/papertrader.db'),
+        LOG_LEVEL: OWN_LOG_LEVEL,
+        LOG_DIR: path.resolve(ROOT_DIR, str('LOG_DIR', './logs')),
+        DASHBOARD_HOST: str('DASHBOARD_HOST', '127.0.0.1'),
+        // Render/Heroku-style hosts inject PORT; honour it when DASHBOARD_PORT is unset.
+        DASHBOARD_PORT: num('DASHBOARD_PORT', Number(process.env.PORT) || 8080, { min: 0, max: 65535 }),
+        MARKET_DATA_CONCURRENCY: num('MARKET_DATA_CONCURRENCY', 4, { min: 1, max: 16 }),
+        STALE_PRICE_SECONDS: num('STALE_PRICE_SECONDS', 300, { min: 30 }),
+
+        // Gold 24h trader (XAUUSD spot via Delta India, paper only).
+        // Delta India model: USD-quoted, INR-margined and INR-settled.
+        GOLD_MARGIN_INR: num('GOLD_MARGIN_INR', 40000, { min: 1 }),
+        GOLD_LEVERAGE: num('GOLD_LEVERAGE', 50, { min: 1, max: 100 }),
+        GOLD_STOP_RISK: num('GOLD_STOP_RISK', 15, { min: 1 }),
+        GOLD_TARGET: num('GOLD_TARGET', 40, { min: 1 }),
+        // Gold rescans continuously (24h); SCAN_INTERVAL_MINUTES still governs NSE.
+        GOLD_SCAN_INTERVAL_MINUTES: num('GOLD_SCAN_INTERVAL_MINUTES', 1, { min: 1, max: 120 }),
+        // Real-time spot ticker socket (gold/ETH) for lag-free quotes.
+        SPOT_SOCKET_ENABLED: bool('SPOT_SOCKET_ENABLED', true),
+        // INR per USD — converts the USD gold/ETH quote to the INR margin base.
+        INR_USD_RATE: num('INR_USD_RATE', 84, { min: 1 }),
+
+        // ETH 24h trader (ETHUSD spot via Delta India, paper only).
+        ETH_MARGIN_INR: num('ETH_MARGIN_INR', 40000, { min: 1 }),
+        ETH_LEVERAGE: num('ETH_LEVERAGE', 50, { min: 1, max: 100 }),
+        ETH_STOP_RISK: num('ETH_STOP_RISK', 25, { min: 1 }),
+        ETH_TARGET: num('ETH_TARGET', 60, { min: 1 }),
+        ETH_SCAN_INTERVAL_MINUTES: num('ETH_SCAN_INTERVAL_MINUTES', 1, { min: 1, max: 120 }),
+    };
+    cfg.DATABASE_PATH = databasePath(cfg.DATABASE_URL);
+    if (cfg.ENTRY_CUTOFF >= cfg.EOD_SQUARE_OFF) {
+        throw new Error('ENTRY_CUTOFF must be earlier than EOD_SQUARE_OFF');
+    }
+    return cfg;
+}
+
+/** Per-strategy overrides: STRATEGY_<KEY>_ENABLED / _RESCAN_MINUTES / _SCAN_TIMES. */
+export function strategyOverrides(key) {
+    const p = `STRATEGY_${String(key).toUpperCase()}_`;
+    const rescan = process.env[`${p}RESCAN_MINUTES`];
+    const times = process.env[`${p}SCAN_TIMES`];
+    return {
+        enabled: bool(`${p}ENABLED`, true),
+        rescanMinutes: rescan !== undefined && rescan !== '' ? Number(rescan) : null,
+        scanTimes: times ? times.split(',').map((t) => t.trim()).filter(Boolean) : null,
+    };
+}
+
+/** True when any provider key the original trade LLM router accepts is set. */
+export function aiKeyPresent(env = process.env) {
+    return [
+        'ORCAROUTER_API_KEY', 'GEMINI_API_KEY', 'GEMINI_API_KEYS', 'GROQ_API_KEY', 'GROQ_API_KEYS',
+        'NVIDIA_API_KEY', 'NVIDIA_API_KEYS', 'OPENROUTER_API_KEY', 'OPENROUTER_API_KEYS',
+    ].some((k) => String(env[k] || '').trim());
+}
+
+/** Safe subset for the dashboard. Never includes keys, tokens or URLs with credentials. */
+export function publicConfig(cfg) {
+    return {
+        paperTrading: true,
+        liveTrading: false,
+        lotSize: cfg.LOT_SIZE,
+        minTarget: cfg.MIN_TARGET,
+        minTargetUnit: cfg.MIN_TARGET_UNIT,
+        stopLossPercent: cfg.STOP_LOSS_PERCENT,
+        trailing: {
+            enabled: cfg.TRAILING_ENABLED,
+            distance: cfg.TRAIL_DISTANCE,
+            unit: cfg.TRAIL_DISTANCE_UNIT,
+            lockPctOfTarget: cfg.TRAIL_LOCK_PCT,
+        },
+        session: {
+            timezone: cfg.MARKET_TZ,
+            open: cfg.SESSION_OPEN,
+            entryCutoff: cfg.ENTRY_CUTOFF,
+            eodSquareOff: cfg.EOD_SQUARE_OFF,
+        },
+        maxTradesPerStrategyPerDay: cfg.MAX_TRADES_PER_STRATEGY_PER_DAY,
+        allowDuplicatePositions: cfg.ALLOW_DUPLICATE_POSITIONS,
+        slippageBps: cfg.SLIPPAGE_BPS,
+        lotSizeSource: cfg.LOT_SIZE_SOURCE,
+        capitalPerStrategy: cfg.CAPITAL_PER_STRATEGY,
+        ranking: {
+            weights: cfg.RANK_WEIGHTS,
+            pfCap: cfg.RANK_PF_CAP,
+            ddCapPct: cfg.RANK_DD_CAP_PCT,
+            fullSampleTrades: cfg.RANK_FULL_SAMPLE_TRADES,
+        },
+        aiGateMode: cfg.AI_GATE_MODE,
+        aiConfigured: aiKeyPresent(),
+        nseTradeOptions: cfg.NSE_TRADE_OPTIONS,
+        nseOptionRisk: { stopPct: cfg.NSE_OPTION_STOP_PCT, minTargetPct: cfg.NSE_OPTION_MIN_TARGET_PCT, trailPct: cfg.NSE_OPTION_TRAIL_PCT },
+        scanIntervalMinutes: cfg.SCAN_INTERVAL_MINUTES,
+        pricePollSeconds: cfg.PRICE_POLL_SECONDS,
+        gold: {
+            symbol: 'XAUUSD',
+            marginInr: cfg.GOLD_MARGIN_INR,
+            leverage: cfg.GOLD_LEVERAGE,
+            stopRisk: cfg.GOLD_STOP_RISK,
+            target: cfg.GOLD_TARGET,
+            roundTheClock: true,
+        },
+        eth: {
+            symbol: 'ETHUSD',
+            marginInr: cfg.ETH_MARGIN_INR,
+            leverage: cfg.ETH_LEVERAGE,
+            stopRisk: cfg.ETH_STOP_RISK,
+            target: cfg.ETH_TARGET,
+            roundTheClock: true,
+        },
+        inrUsdRate: cfg.INR_USD_RATE,
+    };
+}
+
+export function ensureDirs(cfg) {
+    fs.mkdirSync(cfg.LOG_DIR, { recursive: true });
+    if (cfg.DATABASE_PATH !== ':memory:') fs.mkdirSync(path.dirname(cfg.DATABASE_PATH), { recursive: true });
+}

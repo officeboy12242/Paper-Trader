@@ -1,0 +1,56 @@
+# Render blueprint for PaperTrader.
+#
+# This app is a long-running Node process (scheduler + market-data monitor +
+# live ticker socket + SQLite). It needs an always-on service with a
+# persistent disk — the free tier sleeps and has no disks, so use `starter`.
+#
+# Deploy: push this folder as the repo root to GitHub, then
+# Render Dashboard -> New -> Blueprint -> select the repo.
+# Set Root Directory to `.` (or to `PaperTrader` if package.json sits in a
+# subfolder), then add your secrets (AI keys) as env vars in the dashboard.
+
+services:
+  - type: web
+    name: papertrader
+    runtime: node
+    plan: starter
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeploy: true
+    disk:
+      name: papertrader-data
+      mountPath: /opt/render/project/src/data
+      sizeGB: 1
+    envVars:
+      - key: DASHBOARD_HOST
+        value: 0.0.0.0
+      - key: PAPER_TRADING
+        value: true
+      # SQLite lives on the persistent disk so positions, signals and P&L
+      # survive restarts and redeploys.
+      - key: DATABASE_URL
+        value: sqlite:/opt/render/project/src/data/papertrader.db
+      # JSONL logs on the disk too (console output is captured by Render anyway).
+      - key: LOG_DIR
+        value: /opt/render/project/src/data/logs
+      # ---- trading knobs (same defaults as .env.example) ----
+      - key: GOLD_MARGIN_INR
+        value: 40000
+      - key: GOLD_LEVERAGE
+        value: 50
+      - key: ETH_MARGIN_INR
+        value: 40000
+      - key: ETH_LEVERAGE
+        value: 50
+      - key: GOLD_SCAN_INTERVAL_MINUTES
+        value: 2
+      - key: ETH_SCAN_INTERVAL_MINUTES
+        value: 2
+      # ---- secrets: set these in the Render dashboard, never in git ----
+      - key: ORCAROUTER_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
