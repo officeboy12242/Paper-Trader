@@ -5,9 +5,10 @@
  *     -> signal gating -> Risk manager -> Paper execution -> Position manager
  *     -> SQLite -> Statistics -> Dashboard API
  *
- * Two loops, each guarded against overlap and against its own exceptions:
+ * Three loops, each guarded against overlap and against its own exceptions:
  *   scheduler  every SCHEDULER_TICK_SECONDS: each trader decides if a scan is due
  *   monitor    every PRICE_POLL_SECONDS: fills, stops, targets, trailing, EOD
+ *   trainer    once a day: rebuild the model gate from closed trades (src/ml)
  * Nothing is held only in memory: a restart resumes from the database.
  */
 
@@ -23,6 +24,7 @@ import { LotSizeService } from '../market/lotSizes.js';
 import { sessionPhase, sessionDate, weekKey, monthKey } from '../market/clock.js';
 import { computeMetrics, equityCurve, pnlBy, filterPeriod, periodRange } from '../stats/statistics.js';
 import { rankStrategies, rankingSettings } from '../stats/ranking.js';
+import { runTraining } from '../ml/trainer.js';
 import { publicConfig } from '../config.js';
 
 export class Engine {
@@ -71,14 +73,18 @@ export class Engine {
         this.loops = {
             scheduler: { busy: false, lastStart: null, lastEnd: null, errors: 0 },
             monitor: { busy: false, lastStart: null, lastEnd: null, errors: 0 },
+            trainer: { busy: false, lastStart: null, lastEnd: null, errors: 0 },
         };
+        // Live self-training state. Shared by reference with every trader's
+        // ctx so a promoted model hot-swaps in without rebuilding anything.
+        this.ml = { model: null, status: { ran: false, promoted: false, reason: 'no training run yet', at: null } };
         this._inflight = new Set();
     }
 
     /** Register strategies from the WA-BOT source list and build one trader each. */
     init() {
         const defs = discoverStrategies(this.cfg);
-        const ctx = { cfg: this.cfg, db: this.db, logger: this.logger, positions: this.positions, marketData: this.marketData, mongo: this.mongo, now: this.now };
+        const ctx = { cfg: this.cfg, db: this.db, logger: this.logger, positions: this.positions, marketData: this.marketData, mongo: this.mongo, now: this.now, ml: this.ml };
         const existing = new Map(this.db.listStrategies().map((s) => [s.key, s]));
         this.traders = defs.map((def) => {
             // A strategy toggled off in the dashboard stays off across restarts.
@@ -140,6 +146,62 @@ export class Engine {
         this._every('lots', 60 * 60_000, () => this.lotSizes.refresh());
         this._every('heartbeat', 60_000, async () => this.db.setKv('heartbeat', String(this.now())));
         this._loop('scheduler', () => this.schedulerTick());
+
+        // Nightly self-training (Option A): an in-process loop that reads the
+        // same SQLite file, refuses to run until there is a real sample, and
+        // hot-swaps a promoted model into `this.ml` for the traders to read.
+        this.reloadMlModel();
+        this._every('trainer', 30 * 60_000, () => this.maybeTrain());
+    }
+
+    /** (Re)load the promoted model from disk. Safe to call at any time. */
+    reloadMlModel() {
+        try {
+            this.ml.model = this.db.currentModel();
+            if (this.ml.model) {
+                this.ml.status = {
+                    ...this.ml.status,
+                    modelId: this.ml.model.id,
+                    sampleSize: this.ml.model.sample_size,
+                    testAcc: this.ml.model.metrics?.testAcc ?? null,
+                    trainedAt: this.ml.model.created_at,
+                };
+            }
+        } catch (err) {
+            this.ml.model = null;
+            this.logger.warn('ENGINE', 'MODEL LOAD FAILED', String(err?.message || err));
+        }
+        return this.ml.model;
+    }
+
+    /**
+     * At most once a day, after ML_TRAIN_HOUR_IST. The day is marked before
+     * training so a permanently failing run cannot hammer the log every tick;
+     * `_loop` already swallows and counts any throw.
+     */
+    async maybeTrain() {
+        const cfg = this.cfg;
+        if (!cfg.ML_TRAIN_ENABLED) return null;
+        const day = sessionDate(this.now());
+        if (this.db.getKv('ml:lastTrain') === day) return null;
+        const hour = new Date(this.now() + 5.5 * 60 * 60 * 1000).getUTCHours();
+        if (hour < cfg.ML_TRAIN_HOUR_IST) return null;
+        this.db.setKv('ml:lastTrain', day);
+        return this._loop('trainer', () => this.trainNow());
+    }
+
+    /** One training run. Returns the summary; never throws to the caller. */
+    async trainNow() {
+        const summary = runTraining({ db: this.db, cfg: this.cfg, now: this.now });
+        this.ml.status = summary;
+        if (summary.promoted) {
+            this.reloadMlModel();
+            this.logger.info('ENGINE', 'MODEL PROMOTED',
+                `v${summary.modelId} · ${summary.sampleSize} trades · test acc ${(summary.testAcc * 100).toFixed(1)}% · would veto -₹${Math.round(summary.rejectedPnl)} · kept ₹${Math.round(summary.retainedPnl)}`);
+        } else {
+            this.logger.info('ENGINE', summary.ran ? 'MODEL HELD BACK' : 'TRAINER SKIPPED', summary.reason);
+        }
+        return summary;
     }
 
     _every(name, ms, fn) {
@@ -350,11 +412,30 @@ export class Engine {
             lastMonitorPass: this.positions.lastPass,
             traders: this.traders.map((t) => ({ code: t.code, key: t.def.key, status: t.statusCache.status, detail: t.statusCache.detail, consecutiveErrors: t.consecutiveErrors })),
             memoryMb: Math.round(process.memoryUsage().rss / 1048576),
+            ml: {
+                mode: this.cfg.ML_GATE_MODE,
+                hasModel: Boolean(this.ml.model),
+                ...this.ml.status,
+            },
         };
     }
 
     publicConfig() {
-        return publicConfig(this.cfg);
+        const base = publicConfig(this.cfg);
+        const m = this.ml.model;
+        const s = this.ml.status || {};
+        return {
+            ...base,
+            ml: {
+                ...base.ml,
+                // Live half of the picture: what is in force, and what the
+                // most recent run decided.
+                model: m
+                    ? { id: m.id, sampleSize: m.sample_size, testAcc: m.metrics?.testAcc ?? null, trainedAt: m.created_at, featureCount: (m.weights || []).length }
+                    : null,
+                lastRun: { ran: Boolean(s.ran), promoted: Boolean(s.promoted), reason: s.reason ?? null, sampleSize: s.sampleSize ?? null, testAcc: s.testAcc ?? null, at: s.at ?? null },
+            },
+        };
     }
 
     /** Live spot tick (gold or eth) for the dashboard hero panels. */

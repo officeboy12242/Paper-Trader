@@ -171,6 +171,25 @@ CREATE TABLE IF NOT EXISTS kv (
     value           TEXT,
     updated_at      INTEGER NOT NULL
 );
+
+-- Nightly training runs. promoted = 1 marks the model the gate scores with;
+-- every run is kept for a while so accuracy drift stays inspectable.
+CREATE TABLE IF NOT EXISTS model_versions (
+    id              INTEGER PRIMARY KEY,
+    created_at      INTEGER NOT NULL,
+    trained_through INTEGER,
+    sample_size     INTEGER NOT NULL,
+    train_size      INTEGER NOT NULL,
+    test_size       INTEGER NOT NULL,
+    feature_names   TEXT NOT NULL,
+    weights         TEXT NOT NULL,
+    mean            TEXT NOT NULL,
+    std             TEXT NOT NULL,
+    bias            REAL NOT NULL,
+    metrics         TEXT,
+    promoted        INTEGER NOT NULL DEFAULT 0,
+    note            TEXT
+);
 `;
 
 const json = (v) => (v === undefined || v === null ? null : JSON.stringify(v));
@@ -238,6 +257,74 @@ export class Database {
 
     getKv(key) {
         return this.db.prepare('SELECT value FROM kv WHERE key = ?').get(key)?.value ?? null;
+    }
+
+    // ── model versions ───────────────────────────────────────────────────────
+    insertModelVersion(v) {
+        const m = v.model ?? {};
+        return Number(
+            this.db
+                .prepare(
+                    `INSERT INTO model_versions(created_at, trained_through, sample_size, train_size, test_size,
+                                                feature_names, weights, mean, std, bias, metrics, promoted, note)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                )
+                .run(
+                    v.createdAt, v.trainedThrough ?? null, v.sampleSize, v.trainSize, v.testSize,
+                    json(v.featureNames), json(m.weights ?? []), json(m.mean ?? []), json(m.std ?? []),
+                    m.bias ?? 0, json(v.metrics ?? null), v.promoted ? 1 : 0, v.note ?? null
+                ).lastInsertRowid
+        );
+    }
+
+    _modelRow(row) {
+        if (!row) return null;
+        return {
+            ...row,
+            promoted: Boolean(row.promoted),
+            featureNames: parse(row.feature_names),
+            weights: parse(row.weights) || [],
+            mean: parse(row.mean) || [],
+            std: parse(row.std) || [],
+            metrics: parse(row.metrics) || {},
+        };
+    }
+
+    /** The model the gate scores with: the most recently promoted run. */
+    currentModel() {
+        return this._modelRow(
+            this.db.prepare('SELECT * FROM model_versions WHERE promoted = 1 ORDER BY id DESC LIMIT 1').get()
+        );
+    }
+
+    listModelVersions(limit = 20) {
+        return this.db
+            .prepare('SELECT * FROM model_versions ORDER BY id DESC LIMIT ?')
+            .all(limit)
+            .map((r) => this._modelRow(r));
+    }
+
+    deleteModelVersion(id) {
+        this.db.prepare('DELETE FROM model_versions WHERE id = ?').run(id);
+    }
+
+    /**
+     * Closed trades joined back to their originating signal so a model can be
+     * re-scored on exactly the features the decision saw.
+     */
+    closedTradesWithSignals() {
+        return this.db
+            .prepare(
+                `SELECT t.id, t.symbol, t.direction, t.entry_time, t.exit_time, t.entry_price,
+                        t.stop_loss_price, t.target_price, t.net_pnl, t.exit_reason,
+                        s.signal_metadata AS signal_metadata
+                 FROM trades t
+                 LEFT JOIN signals s ON s.id = t.signal_id
+                 WHERE t.status = 'CLOSED' AND t.net_pnl IS NOT NULL
+                 ORDER BY t.exit_time`
+            )
+            .all()
+            .map(plain);
     }
 
     // ── strategies ───────────────────────────────────────────────────────────

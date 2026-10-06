@@ -234,6 +234,13 @@ export function RiskConfig() {
       ['NSE', `${c.fees?.nse?.venue ?? '—'} · ₹${c.fees?.nse?.brokerageFlat} or ${c.fees?.nse?.brokeragePct}% brokerage + STT/exchange/SEBI/stamp`],
     ]],
     ['AI gate', [['Mode', c.aiGateMode], ['Configured', c.aiConfigured ? 'yes' : 'no']]],
+    ['Self-tuning (nightly trainer)', [
+      ['Trainer', c.ml?.enabled ? `on · ${c.ml.trainHourIst}:00 IST once a day, keeps last ${c.ml.keepVersions} runs` : 'off'],
+      ['Needs before it trains', `≥ ${c.ml?.minTrades} closed trades + walk-forward test ≥ ${c.ml?.minTest}, accuracy ≥ ${(c.ml?.minAcc ?? 0) * 100}%`],
+      ['Gate mode', `${c.ml?.gateMode} · vetoes below ${(c.ml?.gateThreshold ?? 0) * 100}% in “on”`],
+      ['Model in force', c.ml?.model ? `v${c.ml.model.id} · trained on ${c.ml.model.sampleSize} trades · test acc ${((c.ml.model.testAcc ?? 0) * 100).toFixed(1)}%` : 'none yet — collecting trades'],
+      ['Last run', c.ml?.lastRun?.reason ? c.ml.lastRun.reason : 'not run yet'],
+    ]],
     ['Ranking', [['Weights (pnl/pf/wr/dd/n)', c.ranking ? Object.values(c.ranking.weights).join(' / ') : '—'], ['Full sample', c.ranking?.fullSampleTrades]]],
     ['Feeds & loops', [['Scan interval', `${c.scanIntervalMinutes} min`], ['Price poll', `${c.pricePollSeconds} s`]]],
   ];

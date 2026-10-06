@@ -176,6 +176,22 @@ export function loadConfig() {
         DELTA_FEE_ETH_MAKER_PCT: num('DELTA_FEE_ETH_MAKER_PCT', 0.02, { min: 0 }),
         DELTA_FEE_ETH_TAKER_PCT: num('DELTA_FEE_ETH_TAKER_PCT', 0.05, { min: 0 }),
 
+        // Nightly self-training: an in-process loop rebuilds a small logistic
+        // regression gate from closed trades and swaps it in only when it beats
+        // a walk-forward test. Nothing trains until ML_MIN_TRADES closed trades
+        // exist — before that the summary is simply "not enough data".
+        ML_TRAIN_ENABLED: bool('ML_TRAIN_ENABLED', true),
+        ML_TRAIN_HOUR_IST: num('ML_TRAIN_HOUR_IST', 3, { min: 0, max: 23 }),
+        ML_MIN_TRADES: num('ML_MIN_TRADES', 100, { min: 0 }),
+        ML_MIN_TEST: num('ML_MIN_TEST', 20, { min: 0 }),
+        ML_MIN_ACC: num('ML_MIN_ACC', 0.55, { min: 0, max: 1 }),
+        //  off     — never score
+        //  shadow  — score and record the number, never veto (default)
+        //  on      — veto accepted setups scoring below ML_GATE_THRESHOLD
+        ML_GATE_MODE: oneOf('ML_GATE_MODE', 'shadow', ['off', 'shadow', 'on']),
+        ML_GATE_THRESHOLD: num('ML_GATE_THRESHOLD', 0.45, { min: 0, max: 1 }),
+        ML_KEEP_VERSIONS: num('ML_KEEP_VERSIONS', 12, { min: 1 }),
+
         LOT_SIZE_SOURCE: oneOf('LOT_SIZE_SOURCE', 'nse', ['nse', 'repo']),
 
         // Statistics and ranking.
@@ -314,6 +330,20 @@ export function publicConfig(cfg) {
             profitBookInr: cfg.PROFIT_BOOK_INR,
         },
         inrUsdRate: cfg.INR_USD_RATE,
+        // Self-training: what the nightly trainer is allowed to do, and where
+        // it currently stands (the live model status is filled in by the
+        // engine, which owns the database).
+        ml: {
+            enabled: cfg.ML_TRAIN_ENABLED,
+            trainHourIst: cfg.ML_TRAIN_HOUR_IST,
+            minTrades: cfg.ML_MIN_TRADES,
+            minTest: cfg.ML_MIN_TEST,
+            minAcc: cfg.ML_MIN_ACC,
+            gateMode: cfg.ML_GATE_MODE,
+            gateThreshold: cfg.ML_GATE_THRESHOLD,
+            keepVersions: cfg.ML_KEEP_VERSIONS,
+            features: 16,
+        },
         // Where each venue's charges come from, so the dashboard can show them.
         fees: {
             gold: { venue: 'Delta Exchange', side: cfg.DELTA_FEE_SIDE, pct: cfg.DELTA_FEE_SIDE === 'maker' ? cfg.DELTA_FEE_GOLD_MAKER_PCT : cfg.DELTA_FEE_GOLD_TAKER_PCT, gstPct: cfg.FEE_GST_PCT },

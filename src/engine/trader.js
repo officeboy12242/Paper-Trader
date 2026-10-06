@@ -8,6 +8,7 @@
 import { sessionPhase, hhmmToMinutes, istMinutes, sessionDate } from '../market/clock.js';
 import { scheduleFor } from '../strategies/registry.js';
 import { OptionsFeed } from '../market/options.js';
+import { scoreModel } from '../ml/gate.js';
 import { signalText } from '../db/mongo.js';
 
 const RETRY_AFTER_MS = 2 * 60_000;
@@ -198,6 +199,7 @@ export class Trader {
                 ? await this.strategy.evaluateBatch(fresh, discovery, { useAi, capacity })
                 : { decisions: [] };
 
+            if (decisions.length) this._applyModelGate(decisions);
             for (const d of decisions) await this._record(d, { scanId, day, summary, discovery, useAi });
 
             if (capacity <= 0) logger.info(this.code, 'DAILY LIMIT', `${cfg.MAX_TRADES_PER_STRATEGY_PER_DAY} entries reached today`);
@@ -285,6 +287,47 @@ export class Trader {
         };
     }
 
+    /**
+     * Score accepted setups against the promoted model (src/ml).
+     *
+     * `shadow` records the number and changes nothing; `on` flips a below-
+     * threshold setup to REJECT, which `_record` then writes as an ordinary
+     * rejected signal with the score as its reason. Without a promoted model
+     * there is no opinion at all, and any throw degrades to "no opinion" — the
+     * gate must never be able to block a scan.
+     */
+    _applyModelGate(decisions) {
+        try {
+            const { cfg, ml, now } = this.ctx;
+            const mode = cfg?.ML_GATE_MODE;
+            if (!mode || mode === 'off' || !decisions?.length) return;
+            const model = ml?.model;
+            if (!model) return;
+            for (const d of decisions) {
+                if (d.decision !== 'PASS' && d.decision !== 'SOFT') continue;
+                const p = scoreModel(model, {
+                    ts: now(),
+                    symbol: d.symbol,
+                    direction: d.direction,
+                    entry: d.setup?.entry ?? null,
+                    stop: d.setup?.stop ?? null,
+                    target: d.setup?.target ?? null,
+                    setupScore: d.setup?.score ?? null,
+                    confluence: d.confluence ?? null,
+                    bars: d.bars ?? null,
+                });
+                if (p == null) continue;
+                d.modelScore = Math.round(p * 1000) / 1000;
+                if (mode === 'on' && p < cfg.ML_GATE_THRESHOLD) {
+                    d.decision = 'REJECT';
+                    d.reason = `model gate ${d.modelScore.toFixed(2)} < ${cfg.ML_GATE_THRESHOLD}`;
+                }
+            }
+        } catch (err) {
+            this.ctx.logger?.warn(this.code, 'MODEL GATE SKIPPED', String(err?.message || err));
+        }
+    }
+
     async _record(d, { scanId, day, summary, useAi }) {
         const { db, logger, positions } = this.ctx;
         const meta = {
@@ -296,6 +339,9 @@ export class Trader {
             aiMode: useAi ? 'AI_GATE' : 'NO_AI',
             softGate: Boolean(d.softGate),
             isHiddenGem: Boolean(d.isHiddenGem),
+            // Nightly-model confidence at decision time (null when shadow/off
+            // or before the first promotion) — the next training run's input.
+            modelScore: d.modelScore ?? null,
             // Last ~90 1m bars at decision time — the training feature window.
             featureBars: d.bars ?? null,
         };
@@ -323,6 +369,7 @@ export class Trader {
                     aiMode: useAi ? 'AI_GATE' : 'NO_AI',
                     softGate: Boolean(d.softGate),
                     isHiddenGem: Boolean(d.isHiddenGem),
+                    modelScore: d.modelScore ?? null,
                     featureBars: d.bars ?? null,
                     option: meta.option || null,
                     underlying: meta.underlying || null,
