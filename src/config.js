@@ -163,7 +163,7 @@ export function loadConfig() {
         MONGODB_DB: str('MONGODB_DB', 'papertrader'),
         LOG_LEVEL: OWN_LOG_LEVEL,
         LOG_DIR: path.resolve(ROOT_DIR, str('LOG_DIR', './logs')),
-        DASHBOARD_HOST: str('DASHBOARD_HOST', '127.0.0.1'),
+        DASHBOARD_HOST: str('DASHBOARD_HOST', process.env.PORT ? '0.0.0.0' : '127.0.0.1'),
         // Render/Heroku-style hosts inject PORT; honour it when DASHBOARD_PORT is unset.
         DASHBOARD_PORT: num('DASHBOARD_PORT', Number(process.env.PORT) || 8080, { min: 0, max: 65535 }),
         MARKET_DATA_CONCURRENCY: num('MARKET_DATA_CONCURRENCY', 4, { min: 1, max: 16 }),
