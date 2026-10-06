@@ -17,6 +17,7 @@ import { Trader } from './trader.js';
 import { discoverStrategies, scheduleFor } from '../strategies/registry.js';
 import { SourceStrategy } from '../strategies/sourceStrategy.js';
 import { GoldStrategy } from '../strategies/goldStrategy.js';
+import { MongoStore } from '../db/mongo.js';
 import { MarketDataService } from '../market/marketData.js';
 import { LotSizeService } from '../market/lotSizes.js';
 import { sessionPhase, sessionDate, weekKey, monthKey } from '../market/clock.js';
@@ -48,6 +49,9 @@ export class Engine {
             : new SourceStrategy({ def, cfg, now })));
         this.traders = [];
         this.codeById = new Map();
+        // MongoDB mirror for future AI/RAG work. Optional and fully
+        // asynchronous — trading never waits for it.
+        this.mongo = new MongoStore({ uri: cfg.MONGODB_URI, dbName: cfg.MONGODB_DB, logger });
         this.positions = new PositionManager({
             db,
             cfg,
@@ -59,6 +63,7 @@ export class Engine {
             onTradeClosed: () => this.refreshStats(),
             codeOf: (id) => this.codeById.get(id) || `Strategy-${id}`,
             strategyById: (id) => this.traders.find((t) => t.id === id)?.def ?? null,
+            mongo: this.mongo,
         });
         this.timers = [];
         this.running = false;
@@ -73,7 +78,7 @@ export class Engine {
     /** Register strategies from the WA-BOT source list and build one trader each. */
     init() {
         const defs = discoverStrategies(this.cfg);
-        const ctx = { cfg: this.cfg, db: this.db, logger: this.logger, positions: this.positions, marketData: this.marketData, now: this.now };
+        const ctx = { cfg: this.cfg, db: this.db, logger: this.logger, positions: this.positions, marketData: this.marketData, mongo: this.mongo, now: this.now };
         const existing = new Map(this.db.listStrategies().map((s) => [s.key, s]));
         this.traders = defs.map((def) => {
             // A strategy toggled off in the dashboard stays off across restarts.
@@ -116,6 +121,7 @@ export class Engine {
         await this.lotSizes.refresh().catch(() => {});
         this.refreshStats();
         this.marketData.startSpotSocket();
+        this.mongo.connect().catch(() => {});
         // Bridge socket quotes into the quote map so unrealized P&L is live.
         // Socket map is keyed by Delta symbols (XAUTUSD/ETHUSD); bridge to ours.
         this._every('spot', 5_000, () => {
@@ -186,6 +192,7 @@ export class Engine {
         for (const t of this.timers) clearInterval(t);
         this.timers = [];
         this.marketData.stopSpotSocket();
+        await this.mongo.close().catch(() => {});
         const pending = [...this._inflight];
         if (pending.length) {
             this.logger.info('ENGINE', 'STOPPING', `waiting for ${pending.length} task(s)`);

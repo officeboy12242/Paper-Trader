@@ -158,6 +158,9 @@ export function loadConfig() {
 
         // Infrastructure.
         DATABASE_URL: str('DATABASE_URL', 'sqlite:./data/papertrader.db'),
+        // MongoDB mirror for future AI/RAG work (optional; engine runs fine without it).
+        MONGODB_URI: str('MONGODB_URI', ''),
+        MONGODB_DB: str('MONGODB_DB', 'papertrader'),
         LOG_LEVEL: OWN_LOG_LEVEL,
         LOG_DIR: path.resolve(ROOT_DIR, str('LOG_DIR', './logs')),
         DASHBOARD_HOST: str('DASHBOARD_HOST', '127.0.0.1'),

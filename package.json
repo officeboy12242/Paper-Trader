@@ -9,7 +9,8 @@
     "build": "vite build",
     "test": "node --test --test-concurrency=1 \"test/**/*.test.js\"",
     "scan": "node scripts/scan-once.js",
-    "ml:export": "node scripts/export-ml.js"
+    "ml:export": "node scripts/export-ml.js",
+    "ml:export:mongo": "node scripts/export-ml-mongo.js"
   },
   "engines": {
     "node": ">=22.13.0"
@@ -19,6 +20,7 @@
     "axios": "^1.6.5",
     "cheerio": "^1.2.0",
     "dotenv": "^16.4.1",
+    "mongodb": "^7.7.0",
     "pino": "^8.19.0",
     "pino-pretty": "^10.3.1",
     "react": "^19.3.0",

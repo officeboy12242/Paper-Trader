@@ -39,9 +39,9 @@ export class PositionManager {
      * @param {(trade: object) => void} [o.onTradeClosed]
      * @param {(strategyId: number) => string} [o.codeOf]
      */
-    constructor({ db, cfg, adapter, logger, marketData, lotSizes, now = Date.now, onTradeClosed = () => {}, codeOf = (id) => `Strategy-${String(id).padStart(2, '0')}`, strategyById = () => null }) {
+    constructor({ db, cfg, adapter, logger, marketData, lotSizes, now = Date.now, onTradeClosed = () => {}, codeOf = (id) => `Strategy-${String(id).padStart(2, '0')}`, strategyById = () => null, mongo = null }) {
         if (adapter?.mode !== 'PAPER') throw new Error('PositionManager requires the paper execution adapter');
-        Object.assign(this, { db, cfg, adapter, logger, marketData, lotSizes, now, onTradeClosed, codeOf, strategyById });
+        Object.assign(this, { db, cfg, adapter, logger, marketData, lotSizes, now, onTradeClosed, codeOf, strategyById, mongo });
         this.optionsFeed = new OptionsFeed({ logger, now });
         this.lastPass = null;
         this.lastPassError = null;
@@ -325,6 +325,7 @@ export class PositionManager {
         this.db.updateTradeState(trade);
         const changes = this.db.closeTrade(trade.id, { exitPrice: price, exitTime, exitReason: reason, grossPnl: gross, fees, netPnl: net, holdingSeconds });
         if (!changes) return; // already closed by another pass
+        this._mirrorTrade(trade, { exitPrice: price, exitTime, reason, gross, fees, net, holdingSeconds });
         const code = this.codeOf(trade.strategy_id);
         const sign = net >= 0 ? '+' : '-';
         this.logger.info(code, `EXIT ${reason}`, `${trade.symbol} @ ${price}`);
@@ -334,6 +335,46 @@ export class PositionManager {
             this.onTradeClosed(this.db.getTrade(trade.id));
         } catch (err) {
             this.logger.error('ENGINE', 'STATS ERROR', String(err?.message || err));
+        }
+    }
+
+    /** Mirror a closed trade to MongoDB for future AI/RAG work. Never throws. */
+    _mirrorTrade(trade, { exitPrice, exitTime, reason, gross, fees, net, holdingSeconds }) {
+        try {
+            if (!this.mongo?.enabled) return;
+            const sig = trade.signal_id ? this.db.getSignal(trade.signal_id) : null;
+            const sigMeta = sig?.signal_metadata || trade.signal_metadata || {};
+            const risk = Math.abs(trade.entry_price - trade.initial_stop);
+            const rMultiple = risk > 0 ? Math.round(((exitPrice - trade.entry_price) * dirSign(trade.direction)) / risk * 100) / 100 : null;
+            const doc = {
+                ts: trade.entry_time,
+                exitTime,
+                strategyCode: sigMeta.strategyCode || this.codeOf(trade.strategy_id),
+                source: sigMeta.source || null,
+                symbol: trade.symbol,
+                direction: trade.direction,
+                quantity: trade.quantity,
+                entry: trade.entry_price,
+                exitPrice,
+                stop: trade.initial_stop,
+                target: trade.target_price,
+                netPnl: net,
+                grossPnl: gross,
+                fees,
+                exitReason: reason,
+                holdingSeconds,
+                rMultiple,
+                win: net > 0,
+                setup: sigMeta.setup || null,
+                confluence: sigMeta.confluence ?? null,
+                ai: sigMeta.ai || null,
+                filterCondition: trade.filter_condition || null,
+                featureBars: sigMeta.featureBars || null,
+            };
+            doc.text = tradeText(doc);
+            this.mongo.push('trades', doc);
+        } catch {
+            /* mirroring must never break trading */
         }
     }
 

@@ -8,6 +8,7 @@
 import { sessionPhase, hhmmToMinutes, istMinutes, sessionDate } from '../market/clock.js';
 import { scheduleFor } from '../strategies/registry.js';
 import { OptionsFeed } from '../market/options.js';
+import { signalText } from '../db/mongo.js';
 
 const RETRY_AFTER_MS = 2 * 60_000;
 const MAX_ATTEMPTS_PER_SLOT = 3;
@@ -299,11 +300,45 @@ export class Trader {
             featureBars: d.bars ?? null,
         };
         const base = { strategyId: this.id, scanId, sessionDate: day, symbol: d.symbol, direction: d.direction ?? null, filterCondition: d.filterCondition ?? null, metadata: meta };
+        // Mirror every signal to MongoDB for future AI/RAG work. Never throws.
+        const mirror = (signalType, status, extra = {}) => {
+            try {
+                const mongo = this.ctx.mongo;
+                if (!mongo?.enabled) return;
+                const doc = {
+                    ts: this.ctx.now(),
+                    sessionDate: day,
+                    strategyCode: this.code,
+                    source: this.def.key,
+                    symbol: d.symbol,
+                    direction: d.direction ?? null,
+                    signalType,
+                    status,
+                    price: extra.price ?? d.refPrice ?? null,
+                    reason: extra.reason ?? d.reason ?? null,
+                    filterCondition: d.filterCondition ?? null,
+                    setup: d.setup || null,
+                    confluence: d.confluence ?? null,
+                    ai: d.ai || null,
+                    aiMode: useAi ? 'AI_GATE' : 'NO_AI',
+                    softGate: Boolean(d.softGate),
+                    isHiddenGem: Boolean(d.isHiddenGem),
+                    featureBars: d.bars ?? null,
+                    option: meta.option || null,
+                    underlying: meta.underlying || null,
+                };
+                doc.text = signalText(doc);
+                mongo.push('signals', doc);
+            } catch {
+                /* mirroring must never break trading */
+            }
+        };
 
         if (d.decision === 'NO_SETUP') {
             summary.watch += 1;
             if (!db.listSignals({ strategyId: this.id, sessionDate: day, limit: 500 }).some((s) => s.symbol === d.symbol && s.status === 'WATCH')) {
                 db.insertSignal({ ...base, signalType: 'WATCH', status: 'WATCH', rejectReason: d.reason, price: d.refPrice ?? null });
+                mirror('WATCH', 'WATCH');
             }
             return;
         }
@@ -311,6 +346,7 @@ export class Trader {
             summary.errors += 1;
             db.insertSignal({ ...base, signalType: 'ANALYSIS', status: 'ERROR', rejectReason: d.reason });
             logger.warn(this.code, 'SIGNAL ERROR', `${d.symbol}: ${d.reason}`);
+            mirror('ANALYSIS', 'ERROR');
             return;
         }
 
@@ -330,6 +366,7 @@ export class Trader {
             } catch (err) {
                 db.insertSignal({ ...base, signalType: 'ANALYSIS', status: 'ERROR', rejectReason: `option chain: ${err.message}` });
                 summary.errors += 1;
+                mirror('ANALYSIS', 'ERROR', { reason: `option chain: ${err.message}` });
                 return;
             }
         }
@@ -343,10 +380,12 @@ export class Trader {
             summary.rejected += 1;
             db.insertSignal({ ...base, signalType: setup ? 'SETUP' : 'AI_DIRECTION', status: 'REJECTED', rejectReason: d.reason || 'gate', price });
             logger.info(this.code, 'SIGNAL REJECTED', `${d.direction ? (d.direction === 'LONG' ? 'BUY' : 'SELL') + ' ' : ''}${d.symbol}: ${d.reason || 'gate'}`);
+            mirror(setup ? 'SETUP' : 'AI_DIRECTION', 'REJECTED', { price });
             return;
         }
 
         const signalId = db.insertSignal({ ...base, signalType: setup ? 'SETUP' : 'AI_DIRECTION', status: 'ACCEPTED', price });
+        mirror(setup ? 'SETUP' : 'AI_DIRECTION', 'ACCEPTED', { price });
         logger.info(this.code, 'SIGNAL', `${d.direction === 'LONG' ? 'BUY' : 'SELL'} ${d.symbol} @ ${price ?? 'market'}${d.softGate ? ' (soft gate)' : ''}`, { filter: d.filterCondition });
         const placed = positions.placeEntry({ strategyId: this.id, signalId, signal, sessionDate: day });
         if (!placed.ok) {

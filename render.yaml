@@ -54,3 +54,6 @@ services:
         sync: false
       - key: GROQ_API_KEY
         sync: false
+      # MongoDB mirror for AI/RAG (optional — engine runs fine without it).
+      - key: MONGODB_URI
+        sync: false

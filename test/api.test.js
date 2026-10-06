@@ -33,6 +33,7 @@ async function setup() {
 
 test('API endpoints serve dashboard data, CSV export and keep secrets out', async () => {
     process.env.ORCAROUTER_API_KEY = 'sk-should-never-appear';
+    process.env.MONGODB_URI = 'mongodb://mongo-secret-should-never-appear';
     const { web, base, db } = await setup();
     try {
         const get = async (p) => { const r = await fetch(base + p); assert.equal(r.status, 200, p); return r; };
@@ -68,6 +69,7 @@ test('API endpoints serve dashboard data, CSV export and keep secrets out', asyn
         for (const p of ['/api/config', '/api/health', '/api/strategies', '/api/overview']) {
             const body = await (await get(p)).text();
             assert.doesNotMatch(body, /sk-should-never-appear/, p);
+            assert.doesNotMatch(body, /mongo-secret-should-never-appear/, p);
         }
         const html = await (await get('/')).text();
         assert.match(html, /LIVE TRADING DISABLED/);

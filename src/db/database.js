@@ -426,6 +426,12 @@ export class Database {
         return row;
     }
 
+    getSignal(id) {
+        const row = plain(this.db.prepare('SELECT * FROM signals WHERE id = ?').get(Number(id)));
+        if (row) row.signal_metadata = parse(row.signal_metadata);
+        return row;
+    }
+
     openTrades() {
         return this.db.prepare(`SELECT * FROM trades WHERE status = 'OPEN' ORDER BY id`).all().map((r) => ({ ...r, signal_metadata: parse(r.signal_metadata) }));
     }
