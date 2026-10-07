@@ -190,6 +190,60 @@ function Dashboard() {
           <Stat label="Max DD" value={a ? inr(-a.maxDrawdown) : '—'} t={a?.maxDrawdown ? 'neg' : ''} />
           <Stat label="Open" value={`${overview?.activePositions ?? 0} · ${overview?.pendingOrders ?? 0} pend`} />
         </div>
+        <div className="panels" style={{ marginTop: 12 }}>
+          <Panel title="Indian NSE — live trades P&L">
+            <table>
+              <thead><tr><th>Scope</th><th className="r">Trades</th><th className="r">Win rate</th><th className="r">Net P&L</th><th className="r">Fees</th><th className="r">Max DD</th></tr></thead>
+              <tbody>
+                {[
+                  ['Today', overview?.byVenue?.nse?.today],
+                  ['This week', overview?.byVenue?.nse?.weekly],
+                  ['This month', overview?.byVenue?.nse?.monthly],
+                  ['All-time', overview?.byVenue?.nse?.all],
+                ].map(([label, m]) => (
+                  <tr key={label}>
+                    <td>{label}</td>
+                    <td className="r">{m?.totalTrades ?? '—'}</td>
+                    <td className="r">{m?.winRate != null ? pct(m.winRate) : '—'}</td>
+                    <td className={`r ${tone(m?.netPnl)}`}>{m?.netPnl != null ? inr(m.netPnl) : '—'}</td>
+                    <td className="r">{m?.fees != null ? inr(m.fees) : '—'}</td>
+                    <td className={`r ${m?.maxDrawdown ? 'neg' : ''}`}>{m ? inr(-m.maxDrawdown) : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Panel>
+          <Panel title="Gold · ETH (24h) — live trades P&L">
+            <table>
+              <thead><tr><th>Scope</th><th className="r">Trades</th><th className="r">Win rate</th><th className="r">Net P&L</th><th className="r">Fees</th><th className="r">Max DD</th></tr></thead>
+              <tbody>
+                {[
+                  ['Today', ['gold', 'eth'].map((v) => overview?.byVenue?.[v]?.today)],
+                  ['This week', ['gold', 'eth'].map((v) => overview?.byVenue?.[v]?.weekly)],
+                  ['This month', ['gold', 'eth'].map((v) => overview?.byVenue?.[v]?.monthly)],
+                  ['All-time', ['gold', 'eth'].map((v) => overview?.byVenue?.[v]?.all)],
+                ].map(([label, ms]) => {
+                  const totals = (ms || []).filter(Boolean);
+                  const trades = totals.reduce((s, m) => s + (m.totalTrades || 0), 0);
+                  const net = totals.reduce((s, m) => s + (m.netPnl || 0), 0);
+                  const fees = totals.reduce((s, m) => s + (m.fees || 0), 0);
+                  const wins = totals.reduce((s, m) => s + Math.round((m.winRate || 0) * (m.totalTrades || 0)) / 100, 0);
+                  const dd = totals.reduce((s, m) => Math.max(s, m.maxDrawdown || 0), 0);
+                  return (
+                    <tr key={label}>
+                      <td>{label}</td>
+                      <td className="r">{totals.length ? trades : '—'}</td>
+                      <td className="r">{totals.length && trades ? pct((wins / trades) * 100) : '—'}</td>
+                      <td className={`r ${tone(net)}`}>{totals.length ? inr(net) : '—'}</td>
+                      <td className="r">{totals.length ? inr(fees) : '—'}</td>
+                      <td className={`r ${dd ? 'neg' : ''}`}>{totals.length ? inr(-dd) : '—'}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </Panel>
+        </div>
         <div className="cols">
           <div className="col">
             <Panel title="Gold · 24h strategies"><div className="cards gold">{goldTs.map((t) => <StrategyCard key={t.id} t={t} />)}</div></Panel>

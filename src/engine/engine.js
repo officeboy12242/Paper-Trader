@@ -344,6 +344,26 @@ export class Engine {
         const open = this.positions.openPositionsView();
         const metricsAll = computeMetrics(all, { capital: this.cfg.CAPITAL_PER_STRATEGY * Math.max(1, this.traders.length) });
         const metricsToday = computeMetrics(all.filter((t) => t.session_date === today), { capital: this.cfg.CAPITAL_PER_STRATEGY * Math.max(1, this.traders.length) });
+        // Venue split so the dashboard can show Indian NSE separately from the
+        // 24h crypto strategies (gold/eth). Strategies carry roundTheClock
+        // via their key prefix: gold_*/eth_* are the 24h crypto ones.
+        const venueKey = (strategyId) => {
+            const tr = this.traders.find((t) => t.id === strategyId);
+            const key = String(tr?.def?.key || '');
+            if (key.startsWith('gold_')) return 'gold';
+            if (key.startsWith('eth_')) return 'eth';
+            return 'nse';
+        };
+        const venueRows = { nse: [], gold: [], eth: [] };
+        for (const t of all) venueRows[venueKey(t.strategy_id)].push(t);
+        const byVenue = Object.fromEntries(Object.keys(venueRows).map((v) => [v, {
+            all: computeMetrics(venueRows[v], { capital: this.cfg.CAPITAL_PER_STRATEGY * Math.max(1, this.traders.length) }),
+            today: computeMetrics(venueRows[v].filter((t) => t.session_date === today), { capital: this.cfg.CAPITAL_PER_STRATEGY * Math.max(1, this.traders.length) }),
+            weekly: computeMetrics(filterPeriod(venueRows[v], 'weekly', now)),
+            monthly: computeMetrics(filterPeriod(venueRows[v], 'monthly', now)),
+            dailyPnl: pnlBy(venueRows[v], 'day').slice(-30),
+            equity: equityCurve(venueRows[v]),
+        }]));
         return {
             safety: { paperTrading: true, liveTrading: false, executionMode: this.adapter.mode },
             session: sessionPhase(this.cfg, now),
@@ -359,6 +379,7 @@ export class Engine {
             tradersTotal: this.traders.length,
             dailyPnl: pnlBy(all, 'day').slice(-30),
             equity: equityCurve(all),
+            byVenue,
         };
     }
 
