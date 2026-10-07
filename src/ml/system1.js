@@ -189,7 +189,8 @@ export class System1Gate {
     get provider() {
         const p = this.cfg.SYSTEM1_PROVIDER;
         if (p === 'gemini' || p === 'poolside') return p;
-        return 'groq';
+        if (p === 'groq') return 'groq';
+        return 'poolside';
     }
 
     /** Effective model: SYSTEM1_MODEL override, else the provider default. */

@@ -205,7 +205,7 @@ export function loadConfig() {
         SYSTEM1_GATE_MODE: oneOf('SYSTEM1_GATE_MODE', 'shadow', ['off', 'shadow', 'on']),
         // Provider for the verdicts: groq (OpenAI-compatible, strict json_schema
         // decoding) or gemini (REST + responseSchema constrained decoding).
-        SYSTEM1_PROVIDER: oneOf('SYSTEM1_PROVIDER', 'groq', ['groq', 'gemini', 'poolside']),
+        SYSTEM1_PROVIDER: oneOf('SYSTEM1_PROVIDER', 'poolside', ['groq', 'gemini', 'poolside']),
         // Empty = provider default (groq: openai/gpt-oss-120b, gemini: gemini-2.0-flash).
         SYSTEM1_MODEL: str('SYSTEM1_MODEL', ''),
         // A clean confirmation needs at least this conviction (0-100) in "on".
