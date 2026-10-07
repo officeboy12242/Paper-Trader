@@ -387,7 +387,11 @@ export class Engine {
 
     traderViews() {
         const open = this.positions.openPositionsView();
-        const pending = this.db.pendingOrders();
+        const traderDefById = new Map(this.traders.map((t) => [t.id, t.def]));
+        const pending = this.db.pendingOrders().map((o) => {
+            const def = traderDefById.get(o.strategy_id);
+            return { ...o, strategy_code: def?.code ?? this.codeById.get(o.strategy_id) ?? null, strategy_name: def?.name ?? null, strategyId: o.strategy_id, key: def?.key ?? '' };
+        });
         const rank = new Map(this.ranking('all').rows.map((r) => [r.strategy.id, r]));
         const today = sessionDate(this.now());
         return this.db.listStrategies().map((s) => {

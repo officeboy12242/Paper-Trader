@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { fnum, inr, price, pct, tone, IST } from './utils.js';
+import { fnum, inr, price, pct, tone, IST, stratIcon, stratLabel } from './utils.js';
 import { AreaChart, DayBars } from './charts.jsx';
 
 const useApi = (path, ms = 5000) => {
@@ -35,9 +35,9 @@ export function StrategyDetail({ id }) {
   const toggle = async () => { await fetch(`/api/strategies/${id}/${d.enabled ? 'disable' : 'enable'}`, { method: 'POST' }); location.reload(); };
   return (
     <>
-      <div className="crumb"><a href="#/">← Terminal</a> / {d.code}</div>
+      <div className="crumb"><a href="#/">← Terminal</a> / {stratLabel(d)}</div>
       <div className="detail-head">
-        <h1>{gold ? '🪙 ' : eth ? '⚡ ' : ''}{d.code} · {d.name}</h1>
+        <h1>{stratIcon(d.name)} {d.name}</h1>
         <button className={d.enabled ? 'btn danger' : 'btn'} onClick={toggle}>{d.enabled ? 'Disable trader' : 'Enable trader'}</button>
       </div>
       <p className="muted">{d.description}</p>
@@ -167,7 +167,7 @@ export function TradeHistory() {
           <thead><tr><th>Closed</th><th>Strategy</th><th>Symbol</th><th>Side</th><th className="r">Entry</th><th className="r">Exit</th><th className="r">Qty</th><th className="r">Gross</th><th className="r">Fees</th><th className="r">Net</th><th>Reason</th></tr></thead>
           <tbody>
             {rows.map((t) => (
-              <tr key={t.id}><td>{IST(t.exit_time)}</td><td>{t.strategy_code ?? t.strategy_id}</td><td>{t.symbol}</td><td className={t.direction === 'LONG' ? 'pos' : 'neg'}>{t.direction}</td><td className="r">{price(t.entry_price)}</td><td className="r">{price(t.exit_price)}</td><td className="r">{fnum(t.quantity)}</td><td className={`r ${tone(t.gross_pnl)}`}>{inr(t.gross_pnl)}</td><td className="r">{inr(-t.fees)}</td><td className={`r ${tone(t.net_pnl)}`}>{inr(t.net_pnl)}</td><td>{t.exit_reason}</td></tr>
+              <tr key={t.id}><td>{IST(t.exit_time)}</td><td>{stratIcon(t.strategy_name || t.strategy_key)} {t.strategy_name ?? t.strategy_code ?? t.strategy_id}</td><td>{t.symbol}</td><td className={t.direction === 'LONG' ? 'pos' : 'neg'}>{t.direction}</td><td className="r">{price(t.entry_price)}</td><td className="r">{price(t.exit_price)}</td><td className="r">{fnum(t.quantity)}</td><td className={`r ${tone(t.gross_pnl)}`}>{inr(t.gross_pnl)}</td><td className="r">{inr(-t.fees)}</td><td className={`r ${tone(t.net_pnl)}`}>{inr(t.net_pnl)}</td><td>{t.exit_reason}</td></tr>
             ))}
             {!rows.length && <tr><td colSpan="11" className="muted">No trades match</td></tr>}
           </tbody>

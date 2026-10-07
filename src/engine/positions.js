@@ -461,11 +461,12 @@ export class PositionManager {
         return this.db.openTrades().map((t) => {
             const q = this.marketData.lastQuote(t.symbol);
             const price = q && q.barTs >= (t.last_price_time ?? 0) - MIN ? q.price : t.last_price;
-            const rate = this.strategyById(t.strategy_id)?.roundTheClock ? this.cfg.INR_USD_RATE || 84 : 1;
+            const def = this.strategyById(t.strategy_id);
+            const rate = def?.roundTheClock ? this.cfg.INR_USD_RATE || 84 : 1;
             const unrealized = grossPnl(t.direction, t.entry_price, price, t.quantity) * rate;
             // Margin base for the % return: premium paid for options, the fixed
             // ₹40k paper margin for the gold/eth traders, symbol notional otherwise.
-            const key = this.strategyById(t.strategy_id)?.key ?? '';
+            const key = def?.key ?? '';
             const margin = t.symbol.startsWith('OPT-')
                 ? Math.max(1, t.quantity * t.entry_price)
                 : key.startsWith('gold_')
@@ -475,6 +476,10 @@ export class PositionManager {
                         : Math.max(1, t.quantity * t.entry_price);
             return {
                 ...t,
+                strategyId: t.strategy_id,
+                strategy_code: this.codeOf(t.strategy_id),
+                strategy_name: def?.name ?? null,
+                key,
                 current_price: price,
                 unrealized_pnl: unrealized,
                 margin,

@@ -63,7 +63,13 @@ export function createServer(engine, { host = '127.0.0.1', port = 8080 } = {}) {
         '/api/config': () => engine.publicConfig(),
         '/api/overview': () => engine.overview(),
         '/api/strategies': () => engine.traderViews(),
-        '/api/positions': () => ({ positions: engine.positions.openPositionsView(), pendingOrders: engine.db.pendingOrders() }),
+        '/api/positions': () => ({
+            positions: engine.positions.openPositionsView(),
+            pendingOrders: engine.db.pendingOrders().map((o) => {
+                const t = engine.traders.find((x) => x.id === o.strategy_id);
+                return { ...o, strategy_code: t?.code ?? null, strategy_name: t?.def?.name ?? null, strategyId: o.strategy_id, key: t?.def?.key ?? '' };
+            }),
+        }),
         '/api/events': (q) => engine.db.listEvents({ limit: Math.min(1000, Number(q.get('limit')) || 200), strategyId: q.get('strategyId') ? Number(q.get('strategyId')) : null }),
         '/api/signals': (q) => engine.db.listSignals({ strategyId: q.get('strategyId') ? Number(q.get('strategyId')) : null, sessionDate: q.get('date') || null, limit: Math.min(2000, Number(q.get('limit')) || 200) }),
         '/api/ranking': (q) => engine.ranking(q.get('period') || 'all'),

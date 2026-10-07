@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
-import { fnum,  inr, price, pct, tone, IST, timeIST } from './utils.js';
+import { fnum,  inr, price, pct, tone, IST, timeIST, stratIcon, stratLabel } from './utils.js';
 import { AreaChart, DayBars } from './charts.jsx';
 import { StrategyDetail, LiveMonitor, TradeHistory, Ranking, EventLog, RiskConfig } from './pages.jsx';
 
@@ -266,7 +266,7 @@ function Dashboard() {
                 <tbody>
                   {(positions?.positions || []).map((p) => (
                     <tr key={p.id}>
-                      <td>{p.strategy_code ?? p.strategyId}</td><td>{p.symbol}</td>
+                      <td>{stratIcon(p.key)} {p.strategy_name ?? p.strategy_code ?? ''}</td><td>{p.symbol}</td>
                       <td className={p.direction === 'LONG' ? 'pos' : 'neg'}>{p.direction}</td>
                       <td className="r">{price(p.entry_price)}</td><td className="r">{price(p.current_price)}</td>
                       <td className="r">{price(p.stop_loss_price)}{p.trailing_active ? ' 🔄' : ''}</td><td className="r">{price(p.target_price)}</td>
@@ -277,7 +277,7 @@ function Dashboard() {
                   ))}
                   {(positions?.pendingOrders || []).map((o) => (
                     <tr key={`o${o.id}`} className="pend">
-                      <td>{o.strategy_code ?? o.strategyId}</td><td>{o.symbol}</td>
+                      <td>{stratIcon(o.key)} {o.strategy_name ?? o.strategy_code ?? ''}</td><td>{o.symbol}</td>
                       <td className={o.direction === 'LONG' ? 'pos' : 'neg'}>{o.direction}</td>
                       <td className="r">{price(o.trigger_price)} (stop)</td><td className="r">—</td><td className="r">—</td><td className="r">—</td><td className="r">—</td><td>working</td><td></td>
                     </tr>
