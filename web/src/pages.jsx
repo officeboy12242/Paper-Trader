@@ -264,6 +264,15 @@ export function RiskConfig() {
           <table className="def"><tbody>{rows.map(([k, v]) => <tr key={k}><td>{k}</td><td className="r">{String(v)}</td></tr>)}</tbody></table>
         </Panel>
       ))}
+      <Panel title="Danger zone">
+        <button className="btn danger" onClick={async () => {
+          const pwd = prompt('Enter CLEAR_DB_PASSWORD to wipe the whole trading book:');
+          if (pwd == null) return;
+          const r = await fetch('/api/admin/clearbook', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pwd }) }).then((res) => res.json());
+          if (r.ok) { alert('Trading book wiped — all P&L cleared.'); location.reload(); } else { alert(`Clear failed: ${r.error || 'unknown error'}`); }
+        }}>Clear all P&L / wipe book</button>
+        <p className="muted" style={{ marginTop: 8 }}>Wipes every trade, order, signal, scan, event and stored metric. Requires the <code>CLEAR_DB_PASSWORD</code> set on the server.</p>
+      </Panel>
       <div className="callout">Trailing arms when the target trades; the stop then locks the full target profit and follows the best price. It never loosens. All fills are simulated — no broker is connected.</div>
     </>
   );

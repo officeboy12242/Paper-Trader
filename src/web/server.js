@@ -118,6 +118,25 @@ export function createServer(engine, { host = '127.0.0.1', port = 8080 } = {}) {
                             return send(res, 500, { error: 'internal error' });
                         }
                     }
+                    if (p === '/api/admin/clearbook') {
+                        let raw = '';
+                        req.on('data', (chunk) => { raw += chunk; });
+                        req.on('end', () => {
+                            let password = '';
+                            try { password = JSON.parse(raw || '{}').password || ''; } catch {}
+                            const expected = engine.cfg?.CLEAR_DB_PASSWORD || '';
+                            if (!expected) return send(res, 403, { error: 'CLEAR_DB_PASSWORD is not set — wipe disabled' });
+                            if (String(password) !== expected) return send(res, 401, { error: 'wrong password' });
+                            try {
+                                const r = engine.clearBook();
+                                return send(res, 200, { ok: true, ...r });
+                            } catch (err) {
+                                engine.logger.error('WEB', 'ERROR', String(err?.stack || err));
+                                return send(res, 500, { error: 'internal error' });
+                            }
+                        });
+                        return;
+                    }
                     return send(res, 404, { error: 'not found' });
                 }
                 const s = engine.setEnabled(Number(m[1]), m[2] === 'enable');

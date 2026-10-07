@@ -361,9 +361,18 @@ export class Database {
     }
 
         // ── mongo snapshot backup/restore ───────────────────────────────────────
-    // Dumps the recoverable state (strategies + open orders/trades + the last
-    // few days of signals and scans) so a wiped SQLite file (Render redeploys)
-    // can be rehydrated on boot without re-entering all of today's setup.
+    /** Wipe the live trading book (trades/orders/signals/scans/events/perf). */
+    clearBook() {
+        const run = (sql) => this.db.prepare(sql).run();
+        run('DELETE FROM trades');
+        run('DELETE FROM orders');
+        run('DELETE FROM signals');
+        run('DELETE FROM scans');
+        run('DELETE FROM trade_events');
+        run('DELETE FROM strategy_performance');
+        return { trades: 0, orders: 0, signals: 0, scans: 0, trade_events: 0, strategy_performance: 0 };
+    }
+
     dumpBackup() {
         const strategies = this.db.prepare('SELECT * FROM strategies ORDER BY id').all().map((r) => ({ ...r }));
         const openTrades = this.db.prepare("SELECT * FROM trades WHERE status='OPEN' ORDER BY id").all().map((r) => ({ ...r }));

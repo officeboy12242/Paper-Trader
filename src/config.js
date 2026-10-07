@@ -247,6 +247,10 @@ export function loadConfig() {
         // On a wiped SQLite (e.g., Render redeploy), boot restores engine state
         // from the latest Mongo snapshot. Turn off to start each deploy empty.
         MONGO_RESTORE: bool('MONGO_RESTORE', true),
+        // Password required to wipe the whole trading book (trades/orders/
+        // signals/scans/events/performances) via the dashboard "Clear All P&L"
+        // button. Leave empty to disable the wipe entirely.
+        CLEAR_DB_PASSWORD: str('CLEAR_DB_PASSWORD', ''),
         LOG_LEVEL: OWN_LOG_LEVEL,
         LOG_DIR: path.resolve(ROOT_DIR, str('LOG_DIR', './logs')),
         // Hosted platforms (Render/Railway/Heroku) inject PORT and require

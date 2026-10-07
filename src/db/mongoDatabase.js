@@ -653,6 +653,15 @@ export class MongoDatabase {
         return row ? { ...row } : null;
     }
 
+    /** Wipe the entire live trading book (trades/orders/signals/scans/events/perf). */
+    clearBook() {
+        for (const name of ['trades', 'orders', 'signals', 'scans', 'trade_events', 'strategy_performance']) {
+            try { this.driver?.deleteAllNow?.(this._collName(name)); } catch { /* must not break the caller */ }
+            if (name === 'strategy_performance') { this._rows.strategy_performance = []; this._perf = new Map(); } else { this._rows[name] = []; }
+        }
+        return { trades: 0, orders: 0, signals: 0, scans: 0, trade_events: 0, strategy_performance: 0 };
+    }
+
     // ── mongo snapshot backup/restore (unused in pure mode) ──────────────────
     dumpBackup() {
         return null;
@@ -716,6 +725,12 @@ class MongoDriver {
 
     deleteById(name, id) {
         const p = this.client.db(this.dbName).collection(name).deleteOne({ id });
+        this._queue.push(p);
+        return p;
+    }
+
+    deleteAllNow(name) {
+        const p = this.client.db(this.dbName).collection(name).deleteMany({});
         this._queue.push(p);
         return p;
     }

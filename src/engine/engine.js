@@ -452,6 +452,12 @@ export class Engine {
         return this.db.getStrategy(s.id);
     }
 
+    /** Wipe the full live trading book from whichever DB backend is active. */
+    clearBook() {
+        if (typeof this.db.clearBook === 'function') return this.db.clearBook();
+        return { trades: 0, orders: 0, signals: 0, scans: 0, trade_events: 0, strategy_performance: 0, degraded: true };
+    }
+
     health() {
         const now = this.now();
         let dbOk = false;
