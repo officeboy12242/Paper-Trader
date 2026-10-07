@@ -360,6 +360,59 @@ export class Database {
         return plain(this.db.prepare('SELECT * FROM strategies WHERE id = ?').get(id));
     }
 
+        // ── mongo snapshot backup/restore ───────────────────────────────────────
+    // Dumps the recoverable state (strategies + open orders/trades + the last
+    // few days of signals and scans) so a wiped SQLite file (Render redeploys)
+    // can be rehydrated on boot without re-entering all of today's setup.
+    dumpBackup() {
+        const strategies = this.db.prepare('SELECT * FROM strategies ORDER BY id').all().map((r) => ({ ...r }));
+        const openTrades = this.db.prepare("SELECT * FROM trades WHERE status='OPEN' ORDER BY id").all().map((r) => ({ ...r }));
+        const pendingOrders = this.db.prepare("SELECT * FROM orders WHERE status='PENDING' ORDER BY id").all().map((r) => ({ ...r }));
+        const recentSignals = this.db.prepare('SELECT * FROM signals ORDER BY id DESC LIMIT 200').all().reverse().map((r) => ({ ...r }));
+        const subSignalIds = new Set();
+        for (const o of pendingOrders) if (o.signal_id != null) subSignalIds.add(o.signal_id);
+        for (const t of openTrades) if (t.signal_id != null) subSignalIds.add(t.signal_id);
+        const subSignals = [...subSignalIds].length
+            ? this.db.prepare(`SELECT * FROM signals WHERE id IN (${[...subSignalIds].map(() => '?').join(',')}) ORDER BY id`).all(...subSignalIds).map((r) => ({ ...r }))
+            : [];
+        const seen = new Set(recentSignals.map((s) => s.id));
+        for (const s of subSignals) if (!seen.has(s.id)) recentSignals.push(s);
+        recentSignals.sort((a, b) => a.id - b.id);
+        const scanIds = [...new Set(recentSignals.map((s) => s.scan_id).filter((v) => v != null))];
+        const scans = scanIds.length
+            ? this.db.prepare(`SELECT * FROM scans WHERE id IN (${scanIds.map(() => '?').join(',')}) ORDER BY id`).all(...scanIds).map((r) => ({ ...r }))
+            : [];
+        return { at: Date.now(), strategies, openTrades, pendingOrders, recentSignals, scans };
+    }
+
+    restoreBackup(snap) {
+        if (!snap || typeof snap !== 'object') return null;
+        const stratCount = this.db.prepare('SELECT COUNT(*) AS c FROM strategies').get().c;
+        const tradeCount = this.db.prepare('SELECT COUNT(*) AS c FROM trades').get().c;
+        if (stratCount > 0 || tradeCount > 0) return { skipped: true, reason: 'database not empty' };
+        const insertInto = (table, rows) => {
+            let n = 0;
+            if (!Array.isArray(rows)) return n;
+            for (const row of rows) {
+                try {
+                    const cols = Object.keys(row);
+                    const sql = `INSERT OR IGNORE INTO ${table}(${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`;
+                    this.db.prepare(sql).run(...cols.map((c) => (row[c] === undefined ? null : row[c])));
+                    n += 1;
+                } catch {
+                    /* skip bad row */
+                }
+            }
+            return n;
+        };
+        const strategies = insertInto('strategies', snap.strategies);
+        const scans = insertInto('scans', snap.scans);
+        const recentSignals = insertInto('signals', snap.recentSignals);
+        const pendingOrders = insertInto('orders', snap.pendingOrders);
+        const openTrades = insertInto('trades', snap.openTrades);
+        return { strategies, scans, recentSignals, pendingOrders, openTrades };
+    }
+
     // ── scans ────────────────────────────────────────────────────────────────
     startScan(strategyId, sessionDate, trigger) {
         return Number(

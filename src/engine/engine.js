@@ -85,6 +85,34 @@ export class Engine {
         this._inflight = new Set();
     }
 
+    /**
+     * Optional boot-time hydration: when SQLite is empty (fresh process / wiped
+     * ephemeral disk on Render redeploy), pull the latest Mongo snapshot back
+     * in before init() seeds strategies, so today's open book survives.
+     */
+    async prepare() {
+        if (!this.mongo?.enabled || !this.cfg.MONGO_RESTORE) return;
+        try {
+            await this.mongo.connect();
+            if (!this.mongo.connected) return;
+            const empty = !this.db.listStrategies().length;
+            if (!empty) return;
+            const snap = await this.mongo.latestSnapshot();
+            if (snap) {
+                const r = this.db.restoreBackup(snap) || {};
+                if (r.skipped) {
+                    this.logger.info('ENGINE', 'RESTORE', `skipped — ${r.reason}`);
+                } else {
+                    this.logger.info('ENGINE', 'RESTORE', `from Mongo: ${r.strategies} strategies + ${r.scans ?? 0} scans + ${r.recentSignals} signals + ${r.pendingOrders} orders + ${r.openTrades} open trades`);
+                }
+            } else {
+                this.logger.info('ENGINE', 'RESTORE', 'no snapshot present in Mongo — starting fresh');
+            }
+        } catch (err) {
+            this.logger.warn('ENGINE', 'RESTORE SKIPPED', String(err?.message || err));
+        }
+    }
+
     /** Register strategies from the WA-BOT source list and build one trader each. */
     init() {
         const defs = discoverStrategies(this.cfg);
@@ -143,6 +171,15 @@ export class Engine {
 
         // Monitor first so recovered positions are brought up to date before new scans.
         await this._loop('monitor', () => this.positions.monitor());
+        // Snapshot the recoverable state immediately after that first monitor pass.
+        await this.mongo.upsertSnapshot(this.db.dumpBackup()).catch(() => {});
+        this._every('mongo-snapshot', 60_000, async () => {
+            try {
+                await this.mongo.upsertSnapshot(this.db.dumpBackup());
+            } catch {
+                /* snapshot must never break the scan loops */
+            }
+        });
         this._every('monitor', this.cfg.PRICE_POLL_SECONDS * 1000, () => this.positions.monitor());
         this._every('quotes', 5_000, () => this.refreshOpenQuotes());
         this._every('scheduler', this.cfg.SCHEDULER_TICK_SECONDS * 1000, () => this.schedulerTick());

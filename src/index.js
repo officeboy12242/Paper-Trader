@@ -22,6 +22,7 @@ logger.info('SYSTEM', 'BOOT', '==============================================');
 
 const db = new Database(cfg.DATABASE_PATH);
 const engine = new Engine({ cfg, db, logger });
+await engine.prepare();
 engine.init();
 const web = createServer(engine, { host: cfg.DASHBOARD_HOST, port: cfg.DASHBOARD_PORT });
 

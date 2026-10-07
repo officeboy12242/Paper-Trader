@@ -231,6 +231,9 @@ export function loadConfig() {
         // MongoDB mirror for future AI/RAG work (optional; engine runs fine without it).
         MONGODB_URI: str('MONGODB_URI', ''),
         MONGODB_DB: str('MONGODB_DB', 'papertrader'),
+        // On a wiped SQLite (e.g., Render redeploy), boot restores engine state
+        // from the latest Mongo snapshot. Turn off to start each deploy empty.
+        MONGO_RESTORE: bool('MONGO_RESTORE', true),
         LOG_LEVEL: OWN_LOG_LEVEL,
         LOG_DIR: path.resolve(ROOT_DIR, str('LOG_DIR', './logs')),
         // Hosted platforms (Render/Railway/Heroku) inject PORT and require

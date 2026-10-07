@@ -84,6 +84,37 @@ export class MongoStore {
         }
     }
 
+    /** Upsert the latest full state snapshot (always one doc per db, tagged
+     * `kind:'latest'`). Called by the engine periodically. Returns true on
+     * success, never throws. */
+    async upsertSnapshot(doc) {
+        if (!this.enabled) return false;
+        try {
+            if (!this.connected) await this.connect();
+            if (!this.connected) return false;
+            await this.db
+                .collection('snapshot')
+                .replaceOne({ kind: 'latest' }, { kind: 'latest', ...doc, updatedAt: new Date() }, { upsert: true });
+            return true;
+        } catch (err) {
+            this.logger?.warn('MONGO', 'SNAPSHOT FAILED', String(err?.message || err));
+            return false;
+        }
+    }
+
+    /** Fetch the latest state snapshot, or null. Tolerant of no collection. */
+    async latestSnapshot() {
+        if (!this.enabled) return null;
+        try {
+            if (!this.connected) await this.connect();
+            if (!this.connected) return null;
+            const doc = await this.db.collection('snapshot').findOne({ kind: 'latest' });
+            return doc || null;
+        } catch {
+            return null;
+        }
+    }
+
     async flush() {
         if (!this.enabled || !this.queue.length) return;
         if (!this.connected) {
