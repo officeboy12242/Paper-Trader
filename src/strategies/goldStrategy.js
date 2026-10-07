@@ -12,6 +12,38 @@ export const SPOT_FEED_SYMBOLS = new Map([['XAUUSD', 'XAUTUSD'], ['ETHUSD', 'ETH
 
 const r2 = (n) => Math.round(n * 100) / 100;
 
+/** Resample 1m bars into a higher‑timeframe (e.g. 15m) series. */
+function resample(bars, every) {
+    const out = [];
+    for (let i = 0; i + every <= bars.length; i += every) {
+        const group = bars.slice(i, i + every);
+        out.push({
+            ts: group[0].ts,
+            open: group[0].open,
+            high: Math.max(...group.map((b) => b.high)),
+            low: Math.min(...group.map((b) => b.low)),
+            close: group[group.length - 1].close,
+            volume: group.reduce((a, b) => a + b.volume, 0),
+        });
+    }
+    return out;
+}
+
+/**
+ * Follow‑through gate: only keep a freshly fired setup if the entry bar's
+ * liquidity confirms it — the latest 1m bar must trade in the setup direction
+ * and have not already swept through our stop. Prevents pulling a setup that
+ * has already burned out in a 1m wick.
+ */
+function followThrough(bars, s) {
+    if (!bars.length) return false;
+    const last = bars[bars.length - 1];
+    const risk = Math.abs(Number(s.entry) - Number(s.stop));
+    const tol = Math.max(risk * 0.25, 1e-9);
+    if (s.direction === 'LONG') return last.close >= last.open && last.low > Number(s.stop) - tol;
+    return last.close <= last.open && last.high < Number(s.stop) + tol;
+}
+
 export class GoldStrategy {
     /**
      * @param {object} o
@@ -36,22 +68,27 @@ export class GoldStrategy {
         return false;
     }
 
-    /** Fetch continuous bars and try this strategy's signal function. */
+    /** Fetch continuous bars and try this strategy's signal function on 15m bars. */
     async discover() {
-        const bars = await this.marketData.getBars(this.symbol, { continuous: true });
-        const refPrice = bars.length ? bars[bars.length - 1].close : null;
+        const bars1m = await this.marketData.getBars(this.symbol, { continuous: true });
+        const bars15 = resample(bars1m, 15);
+        const refPrice = bars1m.length ? bars1m[bars1m.length - 1].close : null;
         let setup = null;
         try {
-            setup = this.def.run(bars, {
+            // Fix B: evaluate the setup on 15m bars (escapes 1m noise wicks) and
+            // apply a stricter reward floor (≥ 2R) so a full target ATR clears.
+            setup = this.def.run(bars15, {
                 stopRisk: this.cfg[`${this.def.prefix}_STOP_RISK`] ?? 15,
-                minRR: this.cfg.MIN_RR,
+                minRR: Math.max(this.cfg.MIN_RR, 2),
                 maxRR: this.cfg.MAX_RR,
                 atrStopMult: this.cfg.ATR_STOP_MULT,
             });
         } catch (err) {
             throw new Error(`gold signal failed: ${err.message}`);
         }
-        const candidates = [{ symbol: this.symbol, setup, meta: setup ? { checks: setup.checks } : null, refPrice, bars: bars.slice(-90) }];
+        // Fix A: require a follow‑through 1m bar so we don't enter into the wick.
+        if (setup && !followThrough(bars1m, setup)) setup = null;
+        const candidates = [{ symbol: this.symbol, setup, meta: setup ? { checks: setup.checks } : null, refPrice, bars: bars1m.slice(-90) }];
         return { discovery: { heatmap: null, macro: null }, candidates };
     }
 
