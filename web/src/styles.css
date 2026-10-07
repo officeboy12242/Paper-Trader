@@ -127,3 +127,36 @@ tr.pend { color: var(--muted); font-style: italic; }
 .events div { font-size: 12px; padding: 3px 0; border-bottom: 1px solid var(--line); }
 .events .t { font-family: var(--mono); color: var(--muted); margin-right: 8px; }
 footer { margin-top: 20px; text-align: center; color: var(--muted); font-size: 12px; }
+
+/* ── butter-smooth broker feel ── */
+.panel, .scard, .stat, .chip, .phase, .dot, .btn, .seg button, .tabs a, .hero, .callout { transition: background-color .18s ease, border-color .18s ease, box-shadow .22s ease, color .18s ease, transform .15s ease; }
+.panel, .scard { transition-property: background-color, border-color, box-shadow, transform; }
+.panel:hover, .scard:hover { box-shadow: 0 8px 26px rgba(0,0,0,.35); transform: translateY(-1px); }
+.scard:hover { border-color: var(--line); }
+.btn:hover { filter: brightness(1.25); }
+.btn:active { transform: translateY(1px); }
+.seg button:hover { color: var(--ink); }
+.tabs a:hover { color: var(--ink); }
+.chip:hover { border-color: var(--ink); }
+table tbody tr { transition: background-color .15s ease; }
+table tbody tr:hover { background: rgba(255,255,255,.03); }
+a { transition: color .15s ease; }
+input, select { transition: border-color .15s ease, box-shadow .15s ease; }
+input:focus, select:focus { outline: none; border-color: var(--gold-dim); box-shadow: 0 0 0 2px rgba(240,180,30,.15); }
+
+@keyframes fadeSlideIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+.panel, .scard, .stat, table tbody tr, .events div { animation: fadeSlideIn .25s ease both; }
+
+@keyframes livePulse { 0%, 100% { box-shadow: 0 0 6px var(--green); } 50% { box-shadow: 0 0 14px var(--green); } }
+.chip.live, .dot.ok { animation: livePulse 1.6s ease-in-out infinite; }
+
+.big { transition: color .25s ease; }
+.big.up { color: var(--green) !important; }
+.big.down { color: var(--red) !important; }
+.chg { transition: color .25s ease; }
+
+/* thinner, modern scrollbars like pro desks */
+*::-webkit-scrollbar { height: 8px; width: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
+*::-webkit-scrollbar-thumb:hover { background: var(--muted); }

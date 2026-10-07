@@ -62,12 +62,17 @@ function CryptoHero({ title, quotePath, barsPath, color }) {
   const quote = useApi(quotePath);
   const bars = useApi(barsPath, 15000);
   const change = bars?.length > 1 ? bars[bars.length - 1].close - bars[0].close : null;
-  const pctChg = bars?.length > 1 ? change / bars[0].close : null;
+  const pctChg = change != null && bars?.length > 1 && bars[0].close ? change / bars[0].close : null;
+  const prevRef = React.useRef(null);
+  const tickDir = quote?.price != null && prevRef.current != null
+    ? (quote.price > prevRef.current ? 'up' : quote.price < prevRef.current ? 'down' : '')
+    : '';
+  if (quote?.price != null) prevRef.current = quote.price;
   return (
     <section className="hero" style={{ '--c': color }}>
       <div className="hero-left">
         <div className="sym">{title} <span className="feed">SPOT · Delta India · 1m</span></div>
-        <div className="big" style={{ color }}>{`$${price(quote?.price)}`}</div>
+        <div className={`big ${tickDir}`} style={{ color }}>{`$${price(quote?.price)}`}</div>
         <div className={`chg ${tone(change)}`}>{change != null ? `${change >= 0 ? '+' : ''}${change.toFixed(2)} (${(pctChg * 100).toFixed(2)}%)` : '—'} <span className="muted">day</span></div>
         <div className="chips">
           <span className="chip">Margin ₹{quote ? fnum(quote.marginInr) : '—'}</span>
