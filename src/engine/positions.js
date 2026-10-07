@@ -194,7 +194,9 @@ export class PositionManager {
         const plan = order.risk_plan || {};
         // Option premiums need their own risk scale: a 5% equity stop on a
         // ₹100 premium is noise. Use the option overlay instead.
-        const effCfg = order.symbol.startsWith('OPT-')
+        const isOption = order.symbol.startsWith('OPT-');
+        const isIndianNse = isOption ? false : !this.strategyById(order.strategy_id)?.roundTheClock && !order.symbol.endsWith('USD') && !order.symbol.endsWith('USDT');
+        const effCfg = isOption
             ? {
                 ...this.cfg,
                 STOP_LOSS_PERCENT: this.cfg.NSE_OPTION_STOP_PCT,
@@ -203,7 +205,9 @@ export class PositionManager {
                 TRAIL_DISTANCE: this.cfg.NSE_OPTION_TRAIL_PCT,
                 TRAIL_DISTANCE_UNIT: 'percent',
             }
-            : this.cfg;
+            : isIndianNse
+                ? { ...this.cfg, MIN_TARGET: this.cfg.NSE_MIN_TARGET_PCT, MIN_TARGET_UNIT: 'percent' }
+                : this.cfg;
         const lv = finalizeLevels(
             { direction: order.direction, fill: fill.price, quantity: order.quantity, sourceStop: plan.sourceStop, sourceTarget: plan.sourceTarget },
             effCfg

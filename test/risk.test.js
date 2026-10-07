@@ -135,9 +135,9 @@ test('target exit when trailing is disabled', async () => {
     await w.positions.monitor();
     const t = w.db.searchTrades({}).rows[0];
     assert.equal(t.exit_reason, 'TARGET');
-    assert.equal(t.target_price, 1510, 'source target 1505 lifted to the 10-point minimum');
-    assert.equal(t.exit_price, 1510);
-    assert.equal(t.gross_pnl, 1000);
+    assert.equal(t.target_price, 1507.5, 'source target 1505 lifted to the NSE 0.5% floor');
+    assert.equal(t.exit_price, 1507.5);
+    assert.equal(t.gross_pnl, 750);
 });
 
 test('trailing: target arms the trail, price runs, reversal exits at the trailing stop', async () => {

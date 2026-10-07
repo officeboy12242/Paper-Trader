@@ -45,7 +45,7 @@ test('market entry (AI-direction signal) fills at the next bar open', async () =
     const t = w.db.openTrades()[0];
     assert.equal(t.entry_price, 249.5);
     assert.ok(Math.abs(t.stop_loss_price - 249.5 * 1.05) <= 0.01, '5% above fill');
-    assert.equal(t.target_price, 239.5, '10 points below fill');
+    assert.equal(t.target_price, 248.25, 'NSE equity floor = 0.5% of fill');
 });
 
 test('unfilled orders expire at the entry cutoff', async () => {

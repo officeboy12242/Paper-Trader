@@ -9,7 +9,7 @@ import { createServer, tradesToCsv } from '../src/web/server.js';
 import { nullLogger } from '../src/logger.js';
 
 async function setup() {
-    const cfg = makeCfg({ SLIPPAGE_BPS: 0, TRAILING_ENABLED: 'false' });
+    const cfg = makeCfg({ SLIPPAGE_BPS: 0, TRAILING_ENABLED: 'false', NSE_MIN_TARGET_PCT: 0.5 });
     const clock = new Clock(at('10:00'));
     const db = new Database(':memory:');
     const feed = new FakeFeed(clock);
@@ -90,7 +90,7 @@ test('API endpoints serve dashboard data, CSV export and keep secrets out', asyn
 });
 
 test('POST /api/positions/:id/exit manually closes an open trade as MANUAL_EXIT', async () => {
-    const cfg = makeCfg({ SLIPPAGE_BPS: 0, TRAILING_ENABLED: 'false' });
+    const cfg = makeCfg({ SLIPPAGE_BPS: 0, TRAILING_ENABLED: 'false', NSE_MIN_TARGET_PCT: 0.5 });
     const clock = new Clock(at('10:00'));
     const db = new Database(':memory:');
     const feed = new FakeFeed(clock);

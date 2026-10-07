@@ -13,12 +13,15 @@ export const at = (hhmm, day = DAY) => istTimestamp(day, hhmm);
 
 export function makeCfg(overrides = {}) {
     const keys = Object.keys(overrides);
-    const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
-    for (const k of keys) process.env[k] = String(overrides[k]);
+    // The execution helper tests assert on source targets in points; the new
+    // NSE equity target-floor must not push out their targets.
+    const merged = { NSE_MIN_TARGET_PCT: 0.5, ...overrides };
+    const saved = Object.fromEntries(Object.keys(merged).map((k) => [k, process.env[k]]));
+    for (const k of Object.keys(merged)) process.env[k] = String(merged[k]);
     try {
         return { ...loadConfig(), DATABASE_PATH: ':memory:' };
     } finally {
-        for (const k of keys) {
+        for (const k of Object.keys(merged)) {
             if (saved[k] === undefined) delete process.env[k];
             else process.env[k] = saved[k];
         }

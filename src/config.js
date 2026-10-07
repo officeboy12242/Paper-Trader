@@ -132,8 +132,13 @@ export function loadConfig() {
         NSE_TRADE_OPTIONS: bool('NSE_TRADE_OPTIONS', true),
         // Option premium risk scale (premiums need wider room than equity).
         NSE_OPTION_STOP_PCT: num('NSE_OPTION_STOP_PCT', 30, { min: 1, max: 90 }),
-        NSE_OPTION_MIN_TARGET_PCT: num('NSE_OPTION_MIN_TARGET_PCT', 20, { min: 1, max: 500 }),
+        // 10% floor on premium target for NSE option trades (premium-priced).
+        NSE_OPTION_MIN_TARGET_PCT: num('NSE_OPTION_MIN_TARGET_PCT', 10, { min: 1, max: 500 }),
         NSE_OPTION_TRAIL_PCT: num('NSE_OPTION_TRAIL_PCT', 3, { min: 0.1, max: 50 }),
+        // Direct-stock NSE entries (when no CE/PE chain is available) keep a
+        // 10% target floor via the generic MIN_TARGET plumbing, overridden
+        // by the source's own closer when it is farther.
+        NSE_MIN_TARGET_PCT: num('NSE_MIN_TARGET_PCT', 10, { min: 0.1, max: 1000 }),
         // Risk controls: short cooldown after a stop-loss, and a daily loss limit per strategy.
         STRATEGY_COOLDOWN_MINUTES: num('STRATEGY_COOLDOWN_MINUTES', 5, { min: 0, max: 1440 }),
         DAILY_LOSS_LIMIT_INR: num('DAILY_LOSS_LIMIT_INR', 15000, { min: 0 }),
