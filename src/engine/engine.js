@@ -91,6 +91,7 @@ export class Engine {
      * in before init() seeds strategies, so today's open book survives.
      */
     async prepare() {
+        if (this.cfg.DB_BACKEND === 'mongo') return; // 同款 impl 已经直接使用 MongoDB，不需要再做 snapshot restore。
         if (!this.mongo?.enabled || !this.cfg.MONGO_RESTORE) return;
         try {
             await this.mongo.connect();
@@ -171,15 +172,18 @@ export class Engine {
 
         // Monitor first so recovered positions are brought up to date before new scans.
         await this._loop('monitor', () => this.positions.monitor());
-        // Snapshot the recoverable state immediately after that first monitor pass.
-        await this.mongo.upsertSnapshot(this.db.dumpBackup()).catch(() => {});
-        this._every('mongo-snapshot', 60_000, async () => {
-            try {
-                await this.mongo.upsertSnapshot(this.db.dumpBackup());
-            } catch {
-                /* snapshot must never break the scan loops */
-            }
-        });
+        // Snapshot the recoverable state immediately after that first monitor pass
+        // (仅对 SQLite 后端有意义；直接使用 MongoDB 时不再需要这层冗余备份)。
+        if (this.cfg.DB_BACKEND !== 'mongo') {
+            await this.mongo.upsertSnapshot(this.db.dumpBackup()).catch(() => {});
+            this._every('mongo-snapshot', 60_000, async () => {
+                try {
+                    await this.mongo.upsertSnapshot(this.db.dumpBackup());
+                } catch {
+                    /* snapshot must never break the scan loops */
+                }
+            });
+        }
         this._every('monitor', this.cfg.PRICE_POLL_SECONDS * 1000, () => this.positions.monitor());
         this._every('quotes', 5_000, () => this.refreshOpenQuotes());
         this._every('scheduler', this.cfg.SCHEDULER_TICK_SECONDS * 1000, () => this.schedulerTick());

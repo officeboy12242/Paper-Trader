@@ -155,7 +155,22 @@ export class SourceStrategy {
         try {
             analysis = await this.controller._runDailyAnalysis(symbol, { isHiddenGem: candidate.isHiddenGem });
         } catch (err) {
-            return { ...base, decision: 'ERROR', reason: `AI analysis failed: ${err.message}` };
+            // AI 搞不定不应导致直接 ERROR；走和 !useAi 完全一致的策略自身规则。
+            if (setup) {
+                const signal = { isActionable: true, confidence: 100, recommendation: setup.direction === LONG ? 'SETUP LONG' : 'SETUP SHORT' };
+                const gate = this.controller._passesSendGates({ signal, confluence, entryState: null, marketMode, discovery: discoveryForGates });
+                const soft = !gate.pass && this.controller._isSoftDailyEligible({ signal, confluence, gate, discovery: discoveryForGates });
+                return {
+                    ...base,
+                    decision: gate.pass ? 'PASS' : soft ? 'SOFT' : 'REJECT',
+                    reason: gate.pass ? `AI unavailable (${String(err.message).slice(0, 80)}) — using strategy rules` : gate.reason,
+                    direction: setup.direction,
+                    confidence: setup.score ?? 0,
+                    ai: null,
+                };
+            }
+            // 没有 setup 也输掉了 AI → 以 NO_SETUP 讲清楚，不算 ERROR。
+            return { ...base, decision: 'NO_SETUP', reason: `AI failed and no setup to base the trade on (${String(err.message).slice(0, 80)})`, ai: null };
         }
         const { signal, entryState } = analysis;
         const gate = this.controller._passesSendGates({ signal, confluence, entryState, marketMode, discovery: discoveryForGates });

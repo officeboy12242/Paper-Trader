@@ -8,6 +8,7 @@
 import { loadConfig, ensureDirs } from './config.js';
 import { Logger } from './logger.js';
 import { Database } from './db/database.js';
+import { openMongoDatabase } from './db/mongoDatabase.js';
 import { Engine } from './engine/engine.js';
 import { createServer } from './web/server.js';
 
@@ -19,8 +20,14 @@ logger.info('SYSTEM', 'BOOT', '==============================================');
 logger.info('SYSTEM', 'BOOT', 'PAPER TRADING MODE  |  LIVE TRADING DISABLED');
 logger.info('SYSTEM', 'BOOT', `lot size ${cfg.LOT_SIZE} · min target ${cfg.MIN_TARGET} ${cfg.MIN_TARGET_UNIT} · max stop ${cfg.STOP_LOSS_PERCENT}% · trailing ${cfg.TRAILING_ENABLED ? 'ENABLED' : 'DISABLED'}`);
 logger.info('SYSTEM', 'BOOT', '==============================================');
+logger.info('SYSTEM', 'BOOT', `DB backend: ${cfg.DB_BACKEND}${cfg.DB_BACKEND === 'mongo' ? ` @ ${cfg.MONGODB_URI ? cfg.MONGODB_DB : ''}` : ` (${cfg.DATABASE_PATH})`}`);
 
-const db = new Database(cfg.DATABASE_PATH);
+let db;
+if (cfg.DB_BACKEND === 'mongo') {
+    db = await openMongoDatabase({ uri: cfg.MONGODB_URI, dbName: cfg.MONGODB_DB, logger });
+} else {
+    db = new Database(cfg.DATABASE_PATH);
+}
 const engine = new Engine({ cfg, db, logger });
 await engine.prepare();
 engine.init();

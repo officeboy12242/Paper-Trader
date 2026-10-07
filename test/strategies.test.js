@@ -175,6 +175,17 @@ test('with AI configured: nse trades the AI side; setup sources need AI agreemen
     assert.match(lg.reject_reason, /AI < 70%/);
 });
 
+test('AI failure falls back to the strategy\'s own setup gates, not a blanket reject', async () => {
+    const aiFail = () => { throw new Error('model overloaded'); };
+    const { db, trader } = makeEngine({ controllerOpts: { heatmap: { ai: aiFail } } });
+    await trader('heatmap').runScan('test', DAY);
+    const accepted = db.listSignals({ strategyId: trader('heatmap').id }).filter((s) => s.status === 'ACCEPTED');
+    assert.equal(accepted.length, 1, 'setup-only fallback still accepts the trades');
+    assert.equal(accepted[0].signal_metadata.ai, null);
+    const heatmapOrders = db.pendingOrders().filter((o) => o.strategy_id === trader('heatmap').id);
+    assert.equal(heatmapOrders.length, 1, 'paper order still produced');
+});
+
 test('invalid setup levels from a source are rejected, not traded', async () => {
     const saved = FIXTURES.heatmap2[0].setup;
     FIXTURES.heatmap2[0].setup = { ...saved, stop: 760 }; // stop above entry for a long

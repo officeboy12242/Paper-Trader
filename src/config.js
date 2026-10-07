@@ -228,6 +228,10 @@ export function loadConfig() {
 
         // Infrastructure.
         DATABASE_URL: str('DATABASE_URL', 'sqlite:./data/papertrader.db'),
+        // Backend for the engine's source-of-truth store: 'mongo' (production,
+        // Atlas-backed via the driver wrapper in src/db/mongoDatabase.js — the
+        // default) or 'sqlite' (file DB, kept for offline/dev fallback).
+        DB_BACKEND: oneOf('DB_BACKEND', (process.env.MONGODB_URI || '').trim() ? 'mongo' : 'sqlite', ['mongo', 'sqlite']),
         // MongoDB mirror for future AI/RAG work (optional; engine runs fine without it).
         MONGODB_URI: str('MONGODB_URI', ''),
         MONGODB_DB: str('MONGODB_DB', 'papertrader'),
