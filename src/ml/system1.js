@@ -36,6 +36,8 @@ import { sessionDate } from '../market/clock.js';
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 
+const POOLSIDE_API_URL = 'https://inference.poolside.ai/v1/chat/completions';
+
 /** The typed output contract the model must obey (Laya's choice/score/noul idea). */
 export const VERDICT_SCHEMA = {
     type: 'object',
@@ -185,14 +187,18 @@ export class System1Gate {
 
     /** 'groq' or 'gemini' — which provider answers the verdicts. */
     get provider() {
-        return this.cfg.SYSTEM1_PROVIDER === 'gemini' ? 'gemini' : 'groq';
+        const p = this.cfg.SYSTEM1_PROVIDER;
+        if (p === 'gemini' || p === 'poolside') return p;
+        return 'groq';
     }
 
     /** Effective model: SYSTEM1_MODEL override, else the provider default. */
     get model() {
         const m = String(this.cfg.SYSTEM1_MODEL || '').trim();
         if (m) return m;
-        return this.provider === 'gemini' ? 'gemini-3.8-flash' : 'openai/gpt-oss-120b';
+        if (this.provider === 'gemini') return 'gemini-3.8-flash';
+        if (this.provider === 'poolside') return 'poolside/laguna-s-2.1';
+        return 'openai/gpt-oss-120b';
     }
 
     get mode() {
@@ -206,6 +212,7 @@ export class System1Gate {
     /** The first usable key for this provider. */
     _keyFor(provider) {
         if (provider === 'gemini') return (this.cfg.SYSTEM1_GEMINI_API_KEY || this.cfg.GEMINI_API_KEY || this.cfg.SYSTEM1_API_KEY || '').trim();
+        if (provider === 'poolside') return (this.cfg.SYSTEM1_POOLSIDE_API_KEY || this.cfg.POOLSIDE_API_KEY || this.cfg.SYSTEM1_API_KEY || '').trim();
         return (this.cfg.SYSTEM1_API_KEY || this.cfg.GROQ_API_KEY || '').trim();
     }
 
@@ -281,6 +288,31 @@ export class System1Gate {
         ];
     }
 
+    /** Two poolside attempts: strict json_schema (if they support it), then json_object. */
+    _poolsideAttempts(key, model, d) {
+        const messages = [
+            { role: 'system', content: SYSTEM_PROMPT },
+            { role: 'user', content: buildState(d) },
+        ];
+        const base = { model, messages, temperature: 0, max_tokens: 120 };
+        const opts = {
+            timeout: this.cfg.SYSTEM1_TIMEOUT_MS,
+            headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+        };
+        return [
+            {
+                url: POOLSIDE_API_URL,
+                body: { ...base, response_format: { type: 'json_schema', json_schema: { name: 'system_one_verdict', strict: true, schema: VERDICT_SCHEMA } } },
+                opts,
+            },
+            {
+                url: POOLSIDE_API_URL,
+                body: { ...base, response_format: { type: 'json_object' } },
+                opts,
+            },
+        ];
+    }
+
     /**
      * Ask the model for one typed verdict on a setup that already passed the
      * rules. Never throws. Returns a verdict object or null ("no opinion").
@@ -303,7 +335,7 @@ export class System1Gate {
         const provider = this.provider;
         const key = this._keyFor(provider);
         if (!key) {
-            const expect = provider === 'gemini' ? 'SYSTEM1_GEMINI_API_KEY (or GEMINI_API_KEY)' : 'SYSTEM1_API_KEY (or GROQ_API_KEY)';
+            const expect = provider === 'gemini' ? 'SYSTEM1_GEMINI_API_KEY (or GEMINI_API_KEY)' : provider === 'poolside' ? 'SYSTEM1_POOLSIDE_API_KEY (or POOLSIDE_API_KEY)' : 'SYSTEM1_API_KEY (or GROQ_API_KEY)';
             this.lastRun = { at: this.now(), provider, ok: false, error: `no ${expect} set` };
             return null;
         }
@@ -311,7 +343,11 @@ export class System1Gate {
 
         const model = this.model;
         const started = this.now();
-        const attempts = provider === 'gemini' ? this._geminiAttempts(key, model, d) : this._groqAttempts(key, model, d);
+        const attempts = provider === 'gemini'
+                ? this._geminiAttempts(key, model, d)
+                : provider === 'poolside'
+                    ? this._poolsideAttempts(key, model, d)
+                    : this._groqAttempts(key, model, d);
 
         this.callsToday += 1;
         let text = null;

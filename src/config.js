@@ -205,7 +205,7 @@ export function loadConfig() {
         SYSTEM1_GATE_MODE: oneOf('SYSTEM1_GATE_MODE', 'shadow', ['off', 'shadow', 'on']),
         // Provider for the verdicts: groq (OpenAI-compatible, strict json_schema
         // decoding) or gemini (REST + responseSchema constrained decoding).
-        SYSTEM1_PROVIDER: oneOf('SYSTEM1_PROVIDER', 'groq', ['groq', 'gemini']),
+        SYSTEM1_PROVIDER: oneOf('SYSTEM1_PROVIDER', 'groq', ['groq', 'gemini', 'poolside']),
         // Empty = provider default (groq: openai/gpt-oss-120b, gemini: gemini-2.0-flash).
         SYSTEM1_MODEL: str('SYSTEM1_MODEL', ''),
         // A clean confirmation needs at least this conviction (0-100) in "on".
@@ -221,6 +221,10 @@ export function loadConfig() {
         // GEMINI_API_KEY then SYSTEM1_API_KEY. Used only when
         // SYSTEM1_PROVIDER=gemini.
         SYSTEM1_GEMINI_API_KEY: str('SYSTEM1_GEMINI_API_KEY', ''),
+        // Optional dedicated poolside key for the System-1 gate; falls back to
+        // POOLSIDE_API_KEY then SYSTEM1_API_KEY. Used only when
+        // SYSTEM1_PROVIDER=poolside.
+        SYSTEM1_POOLSIDE_API_KEY: str('SYSTEM1_POOLSIDE_API_KEY', ''),
 
         LOT_SIZE_SOURCE: oneOf('LOT_SIZE_SOURCE', 'nse', ['nse', 'repo']),
 
@@ -385,7 +389,7 @@ export function publicConfig(cfg) {
         // last verdict, error state) are filled in by the engine.
         system1: {
             provider: cfg.SYSTEM1_PROVIDER,
-            model: (cfg.SYSTEM1_MODEL || '').trim() || (cfg.SYSTEM1_PROVIDER === 'gemini' ? 'gemini-3.8-flash' : 'openai/gpt-oss-120b'),
+            model: (cfg.SYSTEM1_MODEL || '').trim() || (cfg.SYSTEM1_PROVIDER === 'gemini' ? 'gemini-3.8-flash' : cfg.SYSTEM1_PROVIDER === 'poolside' ? 'poolside/laguna-s-2.1' : 'openai/gpt-oss-120b'),
             mode: cfg.SYSTEM1_GATE_MODE,
             convictionMin: cfg.SYSTEM1_CONVICTION_MIN,
             timeoutMs: cfg.SYSTEM1_TIMEOUT_MS,
@@ -393,7 +397,9 @@ export function publicConfig(cfg) {
             cooldownMs: cfg.SYSTEM1_COOLDOWN_MS,
             configured: cfg.SYSTEM1_PROVIDER === 'gemini'
                 ? Boolean((cfg.SYSTEM1_GEMINI_API_KEY || cfg.GEMINI_API_KEY || cfg.SYSTEM1_API_KEY || '').trim())
-                : Boolean((cfg.SYSTEM1_API_KEY || cfg.GROQ_API_KEY || '').trim()),
+                : cfg.SYSTEM1_PROVIDER === 'poolside'
+                    ? Boolean((cfg.SYSTEM1_POOLSIDE_API_KEY || cfg.POOLSIDE_API_KEY || cfg.SYSTEM1_API_KEY || '').trim())
+                    : Boolean((cfg.SYSTEM1_API_KEY || cfg.GROQ_API_KEY || '').trim()),
         },
         // Where each venue's charges come from, so the dashboard can show them.
         fees: {

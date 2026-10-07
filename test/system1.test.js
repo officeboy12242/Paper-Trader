@@ -362,6 +362,41 @@ test('persistent 5xx across both attempts still degrades to no opinion', async (
     assert.equal(g.lastRun.ok, false);
 });
 
+test('poolside: OpenAI-compatible request shape + auth header + verdict extraction', async () => {
+    const http = httpVia('{"take":"yes","direction":"buy","conviction":71,"noul":"confirm"}');
+    const g = gate(http, { SYSTEM1_PROVIDER: 'poolside', SYSTEM1_POOLSIDE_API_KEY: 'sky_test', SYSTEM1_MODEL: '' });
+    const verdict = await g.ask(pass());
+    assert.equal(g.provider, 'poolside');
+    assert.equal(g.model, 'poolside/laguna-s-2.1');
+    assert.deepEqual(verdict, { take: 'yes', direction: 'buy', conviction: 71, noul: 'confirm' });
+    assert.equal(http.calls.length, 1);
+    const { url, body, opts } = http.calls[0];
+    assert.match(url, /inference\.poolside\.ai\/v1\/chat\/completions$/);
+    assert.equal(opts.headers.Authorization, 'Bearer sky_test');
+    assert.equal(body.temperature, 0);
+    assert.equal(body.max_tokens, 120);
+    assert.equal(body.model, 'poolside/laguna-s-2.1');
+    assert.equal(body.response_format.type, 'json_schema');
+    assert.equal(body.response_format.json_schema.strict, true);
+    assert.ok(body.messages[0].content.match(/System 1 decision model/));
+});
+
+test('poolside: relaxed json_object retry when schema path is rejected', async () => {
+    let n = 0;
+    const http = {
+        async post(url, body) {
+            n += 1;
+            if (n === 1) throw new Error('response_format json_schema not supported');
+            return { data: { choices: [{ message: { content: '{"take":"no","direction":"sell","conviction":31,"noul":"deny"}' } }] } };
+        },
+    };
+    const g = gate(http, { SYSTEM1_PROVIDER: 'poolside', SYSTEM1_POOLSIDE_API_KEY: 'sky_test', SYSTEM1_MODEL: '' });
+    const v = await g.ask(pass());
+    assert.equal(n, 2);
+    assert.deepEqual(v, { take: 'no', direction: 'sell', conviction: 31, noul: 'deny' });
+    assert.equal(g.consecutiveErrors, 0);
+});
+
 test('gemini provider resolution: key sources + model defaults', () => {
     // dedicated key wins
     assert.equal(gate(null, { SYSTEM1_PROVIDER: 'gemini', SYSTEM1_GEMINI_API_KEY: 'k' }).configured, true);
@@ -374,6 +409,11 @@ test('gemini provider resolution: key sources + model defaults', () => {
     // provider default models
     assert.equal(gate(null, { SYSTEM1_MODEL: '' }).model, 'openai/gpt-oss-120b');
     assert.equal(gate(null, { SYSTEM1_PROVIDER: 'gemini', SYSTEM1_MODEL: '' }).model, 'gemini-3.8-flash');
+    assert.equal(gate(null, { SYSTEM1_PROVIDER: 'poolside', SYSTEM1_MODEL: '' }).model, 'poolside/laguna-s-2.1');
+    // poolside provider keys resolve configured
+    assert.equal(gate(null, { SYSTEM1_PROVIDER: 'poolside', SYSTEM1_POOLSIDE_API_KEY: 'sky_x' }).configured, true);
+    assert.equal(gate(null, { SYSTEM1_PROVIDER: 'poolside', POOLSIDE_API_KEY: 'sky_x' }).configured, true);
+    assert.equal(gate(null, { SYSTEM1_PROVIDER: 'poolside', SYSTEM1_POOLSIDE_API_KEY: '', POOLSIDE_API_KEY: '', SYSTEM1_API_KEY: '' }).configured, false);
     // explicit override respected
     assert.equal(gate(null, { SYSTEM1_PROVIDER: 'gemini', SYSTEM1_MODEL: 'gemini-2.5-flash' }).model, 'gemini-2.5-flash');
     assert.equal(gate(null, { SYSTEM1_MODEL: 'llama-3.3-70b-versatile' }).model, 'llama-3.3-70b-versatile');
@@ -411,14 +451,18 @@ test('trader._applySystem1Gate forwards decisions to the shared gate and survive
 test('system1 knobs and publicConfig block exist', () => {
     const cfg = loadConfig();
     assert.equal(cfg.SYSTEM1_GATE_MODE, 'shadow');
-    assert.ok(['groq', 'gemini'].includes(cfg.SYSTEM1_PROVIDER), 'provider is groq or gemini');
+    assert.ok(['groq', 'gemini', 'poolside'].includes(cfg.SYSTEM1_PROVIDER), 'provider is groq, gemini, or poolside');
     assert.equal(cfg.SYSTEM1_CONVICTION_MIN, 60);
     assert.equal(typeof cfg.SYSTEM1_MODEL, 'string');
     assert.equal(typeof cfg.SYSTEM1_GEMINI_API_KEY, 'string');
     const pub = publicConfig(cfg);
     assert.equal(pub.system1.provider, cfg.SYSTEM1_PROVIDER);
     assert.equal(pub.system1.mode, cfg.SYSTEM1_GATE_MODE);
-    const expectedModel = cfg.SYSTEM1_PROVIDER === 'gemini' ? 'gemini-3.8-flash' : 'openai/gpt-oss-120b';
+    const expectedModel = cfg.SYSTEM1_PROVIDER === 'gemini'
+        ? 'gemini-3.8-flash'
+        : cfg.SYSTEM1_PROVIDER === 'poolside'
+            ? 'poolside/laguna-s-2.1'
+            : 'openai/gpt-oss-120b';
     assert.equal(pub.system1.model, expectedModel);
     assert.equal(typeof pub.system1.configured, 'boolean');
     // a gemini provider with a key resolves its own model + configured state
