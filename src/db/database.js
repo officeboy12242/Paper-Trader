@@ -543,6 +543,12 @@ export class Database {
         );
     }
 
+    /** True if this order id already produced a fill (or went to any non-PENDING state). */
+    isOrderFilled(id) {
+        const row = this.db.prepare('SELECT 1 FROM orders WHERE id = ? AND status != \'PENDING\' LIMIT 1').get(Number(id));
+        return Boolean(row);
+    }
+
     /** Persist the mutable part of an open trade after a monitoring pass. */
     updateTradeState(t) {
         this.db

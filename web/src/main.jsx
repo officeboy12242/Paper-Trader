@@ -251,7 +251,11 @@ function Dashboard() {
             <Panel title="NSE paper strategies"><div className="cards">{nseTs.map((t) => <StrategyCard key={t.id} t={t} />)}</div></Panel>
           </div>
           <div className="col">
-            <Panel title="Positions & working orders">
+            <Panel title="Positions & working orders"
+              right={(positions?.positions?.length || positions?.pendingOrders?.length) ? (
+                <button className="btn danger" onClick={async () => { if (confirm('Exit ALL open positions and cancel working orders?')) { const r = await fetch('/api/positions/exit-all', { method: 'POST' }).then((r) => r.json()); alert(`Closed ${r.closed ?? 0}/${r.attempted ?? 0} positions`); location.reload(); } }}>Exit All</button>
+              ) : null}
+            >
               <table>
                 <thead><tr><th>Strategy</th><th>Symbol</th><th>Side</th><th className="r">Entry</th><th className="r">Mark</th><th className="r">SL</th><th className="r">TP</th><th className="r">U-PnL</th><th>Age</th><th></th></tr></thead>
                 <tbody>

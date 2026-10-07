@@ -70,7 +70,7 @@ export class MongoDatabase {
         this._counters[name] = (this._counters[name] || 0) + 1;
         if (arr?.length) {
             const max = arr.reduce((m, r) => Math.max(m, Number(r.id) || 0), 0);
-            if (max >= this._counters[name]) this._counters[name] = max;
+            if (max >= this._counters[name]) this._counters[name] = max + 1;
         }
         return this._counters[name];
     }
@@ -95,6 +95,20 @@ export class MongoDatabase {
         const c = this._collName(name);
         try {
             const p = this.driver?.insert(c, doc);
+            if (p && typeof p.catch === 'function') this._pending.push(p.catch(() => {}));
+        } catch { /* sync path must not throw on driver hiccup */ }
+    }
+
+    /**
+     * Idempotent write keyed by `id` (uses replaceOne/upsert under the hood),
+     * so a re-run of the same logical insert never creates a duplicate row in
+     * Atlas. Prefer this over `_mongoInsert` for engine rows that already carry
+     * a globally-unique `id`.
+     */
+    _mongoUpsert(name, doc) {
+        const c = this._collName(name);
+        try {
+            const p = this.driver?.replace(c, doc.id, doc);
             if (p && typeof p.catch === 'function') this._pending.push(p.catch(() => {}));
         } catch { /* sync path must not throw on driver hiccup */ }
     }
@@ -156,7 +170,18 @@ export class MongoDatabase {
         }
         for (const name of ENGINE_COLLECTIONS) {
             try {
-                this._rows[name] = await this.driver.list(this._collName(name));
+                const loaded = await this.driver.list(this._collName(name));
+                // Atlas can carry duplicate rows for the same engine id (from a
+                // past `_nextId` reuse + raw insertOne). Keep the most recently
+                // updated row per id so the in-memory store stays canonical and
+                // a duplicate PENDING order row can never be re-filled forever.
+                const byId = new Map();
+                for (const r of loaded) {
+                    const k = r.id ?? r.key ?? null;
+                    const prev = k != null ? byId.get(k) : undefined;
+                    if (prev === undefined || (r.updated_at ?? 0) >= (prev.updated_at ?? prev.entry_time ?? 0)) byId.set(k, r);
+                }
+                this._rows[name] = byId.size ? [...byId.values()] : loaded;
             } catch {
                 this._rows[name] = [];
             }
@@ -199,7 +224,7 @@ export class MongoDatabase {
         } else {
             const row = { id: this._nextId('kv'), key, value, updated_at: Date.now() };
             this._rows.kv.push(row);
-            this._mongoInsert('kv', row);
+            this._mongoUpsert('kv', row);
         }
     }
 
@@ -227,7 +252,7 @@ export class MongoDatabase {
             note: v.note ?? null,
         };
         this._setRow('model_versions', row);
-        this._mongoInsert('model_versions', row);
+        this._mongoUpsert('model_versions', row);
         return row.id;
     }
 
@@ -295,7 +320,7 @@ export class MongoDatabase {
             description, enabled: enabled ? 1 : 0, status: 'STOPPED', status_detail: null, created_at: now, updated_at: now,
         };
         this._setRow('strategies', row);
-        this._mongoInsert('strategies', row);
+        this._mongoUpsert('strategies', row);
         return row.id;
     }
 
@@ -322,7 +347,7 @@ export class MongoDatabase {
     startScan(strategyId, sessionDate, trigger) {
         const row = { id: this._nextId('scans'), strategy_id: strategyId, session_date: sessionDate, trigger, started_at: Date.now(), finished_at: null, ok: null, candidates: null, setups: null, accepted: null, rejected: null, error: null, detail: null };
         this._setRow('scans', row);
-        this._mongoInsert('scans', row);
+        this._mongoUpsert('scans', row);
         return row.id;
     }
 
@@ -356,16 +381,16 @@ export class MongoDatabase {
             filter_condition: s.filterCondition ?? null, signal_metadata: json(s.metadata),
         };
         this._setRow('signals', row);
-        this._mongoInsert('signals', row);
+        this._mongoUpsert('signals', row);
         return row.id;
     }
 
     updateSignalStatus(id, status, rejectReason = null) {
-        const row = this._rows.signals.find((r) => r.id === Number(id));
-        if (!row) return;
-        row.status = status;
-        row.reject_reason = rejectReason ?? null;
-        this._mongoReplace('signals', row);
+        for (const row of this._rows.signals.filter((r) => r.id === Number(id))) {
+            row.status = status;
+            row.reject_reason = rejectReason ?? null;
+            this._mongoUpsert('signals', row);
+        }
     }
 
     /** Symbols already evaluated (accepted or gated) today, for one strategy. */
@@ -416,7 +441,7 @@ export class MongoDatabase {
             risk_plan: json(o.riskPlan), last_bar_ts: o.lastBarTs ?? null,
         };
         this._setRow('orders', row);
-        this._mongoInsert('orders', row);
+        this._mongoUpsert('orders', row);
         return row.id;
     }
 
@@ -436,27 +461,27 @@ export class MongoDatabase {
     }
 
     markOrderFilled(id, fillPrice, filledAt) {
-        const row = this._rows.orders.find((r) => r.id === Number(id));
-        if (!row) return;
-        row.status = 'FILLED';
-        row.fill_price = fillPrice;
-        row.filled_at = filledAt;
-        this._mongoReplace('orders', row);
+        for (const row of this._rows.orders.filter((r) => r.id === Number(id))) {
+            row.status = 'FILLED';
+            row.fill_price = fillPrice;
+            row.filled_at = filledAt;
+            this._mongoUpsert('orders', row);
+        }
     }
 
     closeOrder(id, status, reason) {
-        const row = this._rows.orders.find((r) => r.id === Number(id));
-        if (!row) return;
-        row.status = status;
-        row.cancel_reason = reason;
-        this._mongoReplace('orders', row);
+        for (const row of this._rows.orders.filter((r) => r.id === Number(id))) {
+            row.status = status;
+            row.cancel_reason = reason;
+            this._mongoUpsert('orders', row);
+        }
     }
 
     setOrderBarCursor(id, ts) {
-        const row = this._rows.orders.find((r) => r.id === Number(id));
-        if (!row) return;
-        row.last_bar_ts = ts;
-        this._mongoReplace('orders', row);
+        for (const row of this._rows.orders.filter((r) => r.id === Number(id))) {
+            row.last_bar_ts = ts;
+            this._mongoUpsert('orders', row);
+        }
     }
 
     countEntriesOn(strategyId, sessionDate) {
@@ -470,6 +495,11 @@ export class MongoDatabase {
         const t = this._rows.trades.find((r) => r.strategy_id === strategyId && r.symbol === symbol && r.status === 'OPEN');
         const o = this._rows.orders.find((r) => r.strategy_id === strategyId && r.symbol === symbol && r.status === 'PENDING');
         return Boolean(t || o);
+    }
+
+    /** True if this order id already produced a fill (or went to any non-PENDING state). */
+    isOrderFilled(id) {
+        return this._rows.orders.some((o) => o.id === Number(id) && o.status !== 'PENDING');
     }
 
     // ── trades ───────────────────────────────────────────────────────────────
@@ -487,43 +517,45 @@ export class MongoDatabase {
             status: 'OPEN', filter_condition: t.filterCondition ?? null, signal_metadata: json(t.metadata), created_at: now, updated_at: now,
         };
         this._setRow('trades', row);
-        this._mongoInsert('trades', row);
+        this._mongoUpsert('trades', row);
         return row.id;
     }
 
     /** Persist the mutable part of an open trade after a monitoring pass. */
     updateTradeState(t) {
-        const row = this._rows.trades.find((r) => r.id === Number(t.id) && r.status === 'OPEN');
-        if (!row) return;
-        row.stop_loss_price = t.stop_loss_price;
-        row.trailing_active = t.trailing_active ? 1 : 0;
-        row.trailing_stop = t.trailing_stop ?? null;
-        row.trail_from_ts = t.trail_from_ts ?? null;
-        row.high_water = t.high_water ?? null;
-        row.profit_booked = t.profit_booked ? 1 : 0;
-        row.last_price = t.last_price ?? null;
-        row.last_price_time = t.last_price_time ?? null;
-        row.last_bar_ts = t.last_bar_ts ?? null;
-        row.updated_at = Date.now();
-        this._mongoReplace('trades', row);
+        for (const row of this._rows.trades.filter((r) => r.id === Number(t.id) && r.status === 'OPEN')) {
+            row.stop_loss_price = t.stop_loss_price;
+            row.trailing_active = t.trailing_active ? 1 : 0;
+            row.trailing_stop = t.trailing_stop ?? null;
+            row.trail_from_ts = t.trail_from_ts ?? null;
+            row.high_water = t.high_water ?? null;
+            row.profit_booked = t.profit_booked ? 1 : 0;
+            row.last_price = t.last_price ?? null;
+            row.last_price_time = t.last_price_time ?? null;
+            row.last_bar_ts = t.last_bar_ts ?? null;
+            row.updated_at = Date.now();
+            this._mongoUpsert('trades', row);
+        }
     }
 
     closeTrade(id, { exitPrice, exitTime, exitReason, grossPnl, fees, netPnl, holdingSeconds }) {
-        const row = this._rows.trades.find((r) => r.id === Number(id) && r.status === 'OPEN');
-        if (!row) return 0;
-        row.status = 'CLOSED';
-        row.exit_price = exitPrice;
-        row.exit_time = exitTime;
-        row.exit_reason = exitReason;
-        row.gross_pnl = grossPnl;
-        row.fees = fees;
-        row.net_pnl = netPnl;
-        row.holding_seconds = holdingSeconds;
-        row.last_price = exitPrice;
-        row.last_price_time = exitTime;
-        row.updated_at = Date.now();
-        this._mongoReplace('trades', row);
-        return 1;
+        let changes = 0;
+        for (const row of this._rows.trades.filter((r) => r.id === Number(id) && r.status === 'OPEN')) {
+            row.status = 'CLOSED';
+            row.exit_price = exitPrice;
+            row.exit_time = exitTime;
+            row.exit_reason = exitReason;
+            row.gross_pnl = grossPnl;
+            row.fees = fees;
+            row.net_pnl = netPnl;
+            row.holding_seconds = holdingSeconds;
+            row.last_price = exitPrice;
+            row.last_price_time = exitTime;
+            row.updated_at = Date.now();
+            this._mongoUpsert('trades', row);
+            changes += 1;
+        }
+        return changes;
     }
 
     getTrade(id) {
@@ -588,7 +620,7 @@ export class MongoDatabase {
             ts, type, price, message, detail: json(detail),
         };
         this._setRow('trade_events', row);
-        this._mongoInsert('trade_events', row);
+        this._mongoUpsert('trade_events', row);
     }
 
     listEvents({ limit = 200, strategyId = null, tradeId = null } = {}) {

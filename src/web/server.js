@@ -109,6 +109,15 @@ export function createServer(engine, { host = '127.0.0.1', port = 8080 } = {}) {
                             return send(res, 500, { error: 'internal error' });
                         }
                     }
+                    if (p === '/api/positions/exit-all') {
+                        try {
+                            const r = engine.positions.exitAll();
+                            return send(res, 200, r);
+                        } catch (err) {
+                            engine.logger.error('WEB', 'ERROR', String(err?.stack || err));
+                            return send(res, 500, { error: 'internal error' });
+                        }
+                    }
                     return send(res, 404, { error: 'not found' });
                 }
                 const s = engine.setEnabled(Number(m[1]), m[2] === 'enable');

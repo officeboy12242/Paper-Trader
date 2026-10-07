@@ -162,6 +162,11 @@ export class PositionManager {
     // ── orders ───────────────────────────────────────────────────────────────
 
     _processOrder(order, bars, now) {
+        // Guard: if this order (or a duplicate row carrying its id from an Atlas
+        // corruption) was already filled, never re-fill it. Without this a
+        // duplicated PENDING row is re-processed every monitor pass and spawns
+        // an unbounded number of duplicate trades.
+        if (this.db.isOrderFilled && this.db.isOrderFilled(order.id)) return;
         const code = this.codeOf(order.strategy_id);
         if (bars) {
             const firstTs = Math.floor(order.created_at / MIN) * MIN + MIN; // bars that start after the signal
@@ -383,6 +388,31 @@ export class PositionManager {
         this._close(trade, ex.price, this.now(), 'MANUAL_EXIT', { basis: q ? 'last quote' : 'last known price' });
         const closed = this.db.getTrade(id);
         return { ok: true, tradeId: id, exitPrice: ex.price, netPnl: closed?.net_pnl ?? null };
+    }
+
+    /**
+     * Manual exit of every open trade (dashboard "Exit All" button). Closes
+     * each at the last known quote using the same path as `exitNow`. Never
+     * throws; returns per-trade results so the caller can show what happened.
+     * @param {{ symbol?: string, strategyId?: number }} [filter]
+     */
+    exitAll(filter = {}) {
+        const open = this.db.openTrades()
+            .filter((t) => (!filter.symbol || t.symbol === filter.symbol) && (!filter.strategyId || t.strategy_id === Number(filter.strategyId)));
+        const results = [];
+        for (const trade of open) {
+            try {
+                const q = this.marketData.lastQuote(trade.symbol);
+                const px = q && Number.isFinite(q.price) ? q.price : Number.isFinite(trade.last_price) ? trade.last_price : trade.entry_price;
+                const ex = this.adapter.marketExit({ direction: trade.direction, price: px });
+                this._close(trade, ex.price, this.now(), 'MANUAL_EXIT', { basis: q ? 'last quote' : 'last known price' });
+                const closed = this.db.getTrade(trade.id);
+                results.push({ ok: true, tradeId: trade.id, symbol: trade.symbol, exitPrice: ex.price, netPnl: closed?.net_pnl ?? null });
+            } catch (err) {
+                results.push({ ok: false, tradeId: trade.id, symbol: trade.symbol, reason: String(err?.message || err) });
+            }
+        }
+        return { ok: true, attempted: open.length, closed: results.filter((r) => r.ok).length, results };
     }
 
     /** Mirror a closed trade to MongoDB for future AI/RAG work. Never throws. */

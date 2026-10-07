@@ -118,10 +118,12 @@ export class Engine {
     init() {
         const defs = discoverStrategies(this.cfg);
         const ctx = { cfg: this.cfg, db: this.db, logger: this.logger, positions: this.positions, marketData: this.marketData, mongo: this.mongo, now: this.now, ml: this.ml, system1: this.system1 };
-        const existing = new Map(this.db.listStrategies().map((s) => [s.key, s]));
         this.traders = defs.map((def) => {
-            // A strategy toggled off in the dashboard stays off across restarts.
-            const enabled = existing.has(def.key) ? Boolean(existing.get(def.key).enabled) && def.enabled : def.enabled;
+            // Registry (env `STRATEGY_<KEY>_ENABLED`) is the source of truth at
+            // boot. A redeploy must never leave a strategy stuck DISABLED just
+            // because a stale persisted enabled=0 was hydrated — that was the
+            // cause of "NSE strategies come back off after deployment".
+            const enabled = Boolean(def.enabled);
             const id = this.db.upsertStrategy({ key: def.key, code: def.code, name: def.name, source: def.source, sourceFiles: def.sourceFiles, description: def.description, enabled });
             this.codeById.set(id, def.code);
             return new Trader({ def, strategyId: id, strategy: this.strategyFactory(def), ctx });

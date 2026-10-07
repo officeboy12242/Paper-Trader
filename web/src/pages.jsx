@@ -70,7 +70,11 @@ export function StrategyDetail({ id }) {
           ))}</tbody></table>
         </Panel>
       </div>
-      <Panel title={`Current positions (${d.positions?.length || 0}) · Pending orders (${d.pendingOrders?.length || 0})`}>
+      <Panel title={`Current positions (${d.positions?.length || 0}) · Pending orders (${d.pendingOrders?.length || 0})`}
+        right={d.positions?.length ? (
+          <button className="btn danger" onClick={async () => { if (confirm('Exit ALL open positions for every strategy?')) { const r = await fetch(`/api/positions/exit-all`, { method: 'POST' }).then((r) => r.json()); alert(`Closed ${r.closed ?? 0}/${r.attempted ?? 0} positions`); location.reload(); } }}>Exit All</button>
+        ) : null}
+      >
         <table>
           <thead><tr><th>Symbol</th><th>Side</th><th className="r">Entry</th><th className="r">Current</th><th className="r">Target</th><th className="r">Stop</th><th className="r">Trailing</th><th className="r">Unrealized</th><th></th></tr></thead>
           <tbody>
