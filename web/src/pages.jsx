@@ -72,12 +72,12 @@ export function StrategyDetail({ id }) {
       </div>
       <Panel title={`Current positions (${d.positions?.length || 0}) · Pending orders (${d.pendingOrders?.length || 0})`}>
         <table>
-          <thead><tr><th>Symbol</th><th>Side</th><th className="r">Entry</th><th className="r">Current</th><th className="r">Target</th><th className="r">Stop</th><th className="r">Trailing</th><th className="r">Unrealized</th></tr></thead>
+          <thead><tr><th>Symbol</th><th>Side</th><th className="r">Entry</th><th className="r">Current</th><th className="r">Target</th><th className="r">Stop</th><th className="r">Trailing</th><th className="r">Unrealized</th><th></th></tr></thead>
           <tbody>
             {(d.positions || []).map((p) => (
-              <tr key={p.id}><td>{p.symbol}</td><td className={p.direction === 'LONG' ? 'pos' : 'neg'}>{p.direction}</td><td className="r">{price(p.entry_price)}</td><td className="r">{price(p.current_price)}</td><td className="r">{price(p.target_price)}</td><td className="r">{price(p.stop_loss_price)}</td><td className="r">{p.trailing_active ? price(p.trailing_stop) : 'armed @ target'}</td><td className={`r ${tone(p.unrealized_pnl)}`}>{inr(p.unrealized_pnl)}</td></tr>
+              <tr key={p.id}><td>{p.symbol}</td><td className={p.direction === 'LONG' ? 'pos' : 'neg'}>{p.direction}</td><td className="r">{price(p.entry_price)}</td><td className="r">{price(p.current_price)}</td><td className="r">{price(p.target_price)}</td><td className="r">{price(p.stop_loss_price)}</td><td className="r">{p.trailing_active ? price(p.trailing_stop) : 'armed @ target'}</td><td className={`r ${tone(p.unrealized_pnl)}`}>{inr(p.unrealized_pnl)}</td><td className="r"><button className="btn danger" onClick={async () => { await fetch(`/api/positions/${p.id}/exit`, { method: 'POST' }); location.reload(); }}>Exit</button></td></tr>
             ))}
-            {!d.positions?.length && <tr><td colSpan="8" className="muted">Flat</td></tr>}
+            {!d.positions?.length && <tr><td colSpan="9" className="muted">Flat</td></tr>}
           </tbody>
         </table>
       </Panel>

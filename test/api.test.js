@@ -89,6 +89,49 @@ test('API endpoints serve dashboard data, CSV export and keep secrets out', asyn
     }
 });
 
+test('POST /api/positions/:id/exit manually closes an open trade as MANUAL_EXIT', async () => {
+    const cfg = makeCfg({ SLIPPAGE_BPS: 0, TRAILING_ENABLED: 'false' });
+    const clock = new Clock(at('10:00'));
+    const db = new Database(':memory:');
+    const feed = new FakeFeed(clock);
+    const engine = new Engine({
+        cfg, db, logger: nullLogger, lotSizes: fakeLots, now: clock.now,
+        marketData: new MarketDataService({ cfg, logger: nullLogger, fetchCandles: feed.fetchCandles, now: clock.now, retries: 0 }),
+        strategyFactory: (def) => new SourceStrategy({ def, cfg }),
+    });
+    engine.init();
+    const id = engine.traders[0].id;
+    const sigId = db.insertSignal({ strategyId: id, sessionDate: '2026-10-06', symbol: 'RELIANCE', direction: 'LONG', signalType: 'SETUP', status: 'ACCEPTED', price: 1200, filterCondition: 'heatmap: test' });
+    engine.positions.placeEntry({ strategyId: id, signalId: sigId, signal: { symbol: 'RELIANCE', direction: 'LONG', orderType: 'STOP_ENTRY', entry: 1200, stop: 1190, target: 1210, filterCondition: 'heatmap: test' }, sessionDate: '2026-10-06' });
+    // Bars stay inside the stop/target band, so the position remains open.
+    feed.set('RELIANCE', [bar('10:01', 1200, 1201, 1199, 1200), bar('10:02', 1200, 1201, 1199, 1200)]);
+    clock.set('10:03');
+    await engine.positions.monitor();
+    const open = db.openTrades();
+    assert.equal(open.length, 1, 'position stays open before the manual exit');
+    const tid = open[0].id;
+
+    const web = createServer(engine, { port: 0 });
+    const base = await web.listen();
+    try {
+        const r = await fetch(`${base}/api/positions/${tid}/exit`, { method: 'POST' });
+        assert.equal(r.status, 200);
+        const body = await r.json();
+        assert.equal(body.ok, true);
+        const closed = db.getTrade(tid);
+        assert.equal(closed.exit_reason, 'MANUAL_EXIT');
+        assert.equal(db.openTrades().length, 0);
+        // A second manual exit reports the trade is no longer open.
+        const again = await fetch(`${base}/api/positions/${tid}/exit`, { method: 'POST' });
+        assert.equal(again.status, 404);
+        // Cross-origin exits are refused like the toggle.
+        const forged = await fetch(`${base}/api/positions/${tid}/exit`, { method: 'POST', headers: { Origin: 'http://evil.example' } });
+        assert.equal(forged.status, 403);
+    } finally {
+        await web.close();
+    }
+});
+
 test('CSV helper escapes commas, quotes and newlines', () => {
     const csv = tradesToCsv([{ id: 1, symbol: 'M&M', filter_condition: 'a,b\n"c"' }]);
     assert.match(csv, /"a,b\n""c"""/);

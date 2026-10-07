@@ -98,7 +98,19 @@ export function createServer(engine, { host = '127.0.0.1', port = 8080 } = {}) {
                 const origin = req.headers.origin;
                 if (origin && new URL(origin).host !== req.headers.host) return send(res, 403, { error: 'cross-origin request refused' });
                 const m = p.match(/^\/api\/strategies\/(\d+)\/(enable|disable)$/);
-                if (!m) return send(res, 404, { error: 'not found' });
+                if (!m) {
+                    const ex = p.match(/^\/api\/positions\/(\d+)\/exit$/);
+                    if (ex) {
+                        try {
+                            const r = engine.positions.exitNow(Number(ex[1]));
+                            return r.ok ? send(res, 200, r) : send(res, r.reason === 'trade not open' ? 404 : 400, r);
+                        } catch (err) {
+                            engine.logger.error('WEB', 'ERROR', String(err?.stack || err));
+                            return send(res, 500, { error: 'internal error' });
+                        }
+                    }
+                    return send(res, 404, { error: 'not found' });
+                }
                 const s = engine.setEnabled(Number(m[1]), m[2] === 'enable');
                 return s ? send(res, 200, s) : send(res, 404, { error: 'unknown strategy' });
             }

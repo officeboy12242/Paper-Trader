@@ -199,7 +199,7 @@ function Dashboard() {
           <div className="col">
             <Panel title="Positions & working orders">
               <table>
-                <thead><tr><th>Strategy</th><th>Symbol</th><th>Side</th><th className="r">Entry</th><th className="r">Mark</th><th className="r">SL</th><th className="r">TP</th><th className="r">U-PnL</th><th>Age</th></tr></thead>
+                <thead><tr><th>Strategy</th><th>Symbol</th><th>Side</th><th className="r">Entry</th><th className="r">Mark</th><th className="r">SL</th><th className="r">TP</th><th className="r">U-PnL</th><th>Age</th><th></th></tr></thead>
                 <tbody>
                   {(positions?.positions || []).map((p) => (
                     <tr key={p.id}>
@@ -209,16 +209,17 @@ function Dashboard() {
                       <td className="r">{price(p.stop_loss_price)}{p.trailing_active ? ' 🔄' : ''}</td><td className="r">{price(p.target_price)}</td>
                       <td className={`r ${tone(p.unrealized_pnl)}`}>{inr(p.unrealized_pnl)}{p.roi_pct != null ? ` ≈${p.roi_pct}%` : ''}</td>
                       <td>{Math.round((p.duration_seconds || 0) / 60)}m</td>
+                      <td className="r"><button className="btn danger" onClick={async () => { await fetch(`/api/positions/${p.id}/exit`, { method: 'POST' }); location.reload(); }}>Exit</button></td>
                     </tr>
                   ))}
                   {(positions?.pendingOrders || []).map((o) => (
                     <tr key={`o${o.id}`} className="pend">
                       <td>{o.strategy_code ?? o.strategyId}</td><td>{o.symbol}</td>
                       <td className={o.direction === 'LONG' ? 'pos' : 'neg'}>{o.direction}</td>
-                      <td className="r">{price(o.trigger_price)} (stop)</td><td className="r">—</td><td className="r">—</td><td className="r">—</td><td className="r">—</td><td>working</td>
+                      <td className="r">{price(o.trigger_price)} (stop)</td><td className="r">—</td><td className="r">—</td><td className="r">—</td><td className="r">—</td><td>working</td><td></td>
                     </tr>
                   ))}
-                  {!positions?.positions?.length && !positions?.pendingOrders?.length && <tr><td colSpan="9" className="muted">Flat book — no open positions or working orders.</td></tr>}
+                  {!positions?.positions?.length && !positions?.pendingOrders?.length && <tr><td colSpan="10" className="muted">Flat book — no open positions or working orders.</td></tr>}
                 </tbody>
               </table>
             </Panel>

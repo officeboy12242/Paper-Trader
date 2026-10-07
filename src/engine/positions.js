@@ -24,7 +24,7 @@ import { OptionsFeed, parseOptionSymbol, underlyingOf } from '../market/options.
 
 const MIN = 60_000;
 
-export const EXIT_REASONS = ['TARGET', 'TRAILING_STOP', 'STOP_LOSS', 'EOD_SQUARE_OFF'];
+export const EXIT_REASONS = ['TARGET', 'TRAILING_STOP', 'STOP_LOSS', 'EOD_SQUARE_OFF', 'MANUAL_EXIT'];
 
 export class PositionManager {
     /**
@@ -360,6 +360,25 @@ export class PositionManager {
         } catch (err) {
             this.logger.error('ENGINE', 'STATS ERROR', String(err?.message || err));
         }
+    }
+
+    /**
+     * Manual exit of an open trade — the dashboard "Exit" button. Closes at the
+     * last known quote using the same cake-path as an EOD square-off:
+     * market exit fill -> realized gross -> round-trip fees -> net P&L, one
+     * EXIT event and a Mongo mirror. Never throws; returns a result object.
+     */
+    exitNow(tradeId) {
+        const id = Number(tradeId);
+        if (!Number.isFinite(id)) return { ok: false, reason: 'bad trade id' };
+        const trade = this.db.getTrade(id);
+        if (!trade || trade.status !== 'OPEN') return { ok: false, reason: 'trade not open' };
+        const q = this.marketData.lastQuote(trade.symbol);
+        const px = q && Number.isFinite(q.price) ? q.price : Number.isFinite(trade.last_price) ? trade.last_price : trade.entry_price;
+        const ex = this.adapter.marketExit({ direction: trade.direction, price: px });
+        this._close(trade, ex.price, this.now(), 'MANUAL_EXIT', { basis: q ? 'last quote' : 'last known price' });
+        const closed = this.db.getTrade(id);
+        return { ok: true, tradeId: id, exitPrice: ex.price, netPnl: closed?.net_pnl ?? null };
     }
 
     /** Mirror a closed trade to MongoDB for future AI/RAG work. Never throws. */
