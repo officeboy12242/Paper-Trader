@@ -266,7 +266,12 @@ export class Trader {
         if (!(entry > 0)) return { optionSignal: null, metaPatch: {} };
         const premiumRisk = entry * stopPct;
         const stop = Math.round((entry - premiumRisk) * 100) / 100;
-        const target = Math.round((entry + 2 * premiumRisk) * 100) / 100;
+        // Option TP is pinned at NSE_OPTION_MIN_TARGET_PCT above premium —
+        // no more 2× risk bump to 60% in the instruments where 60% premium
+        // is the common intraday outcome. Direct-stock NSE rows keep the
+        // 10% floor behaviour via NSE_MIN_TARGET_PCT.
+        const targetPct = (cfg.NSE_OPTION_MIN_TARGET_PCT ?? 10) / 100;
+        const target = Math.round((entry * (1 + targetPct)) * 100) / 100;
         if (!(stop > 0)) return { optionSignal: null, metaPatch: {} };
         const optionSignal = {
             symbol: quote.symbol,
