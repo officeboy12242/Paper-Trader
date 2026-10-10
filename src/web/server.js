@@ -170,7 +170,9 @@ export function createServer(engine, { host = '127.0.0.1', port = 8080 } = {}) {
             if (p.startsWith('/api/')) return send(res, 404, { error: 'not found' });
 
             // Static files (single-page app, hash routing).
-            const rel = p === '/' ? 'app/index.html' : p.replace(/^\/+/, '');
+            // / and /app and /app/ all serve the SPA shell (Vite base is /app/).
+            const isAppRoot = (p === '/app' || p === '/app/');
+            const rel = (p === '/' || isAppRoot) ? 'app/index.html' : p.replace(/^\/+/, '');
             const file = path.normalize(path.join(PUBLIC_DIR, rel));
             if (!file.startsWith(PUBLIC_DIR)) return send(res, 403, 'forbidden', 'text/plain');
             fs.readFile(file, (err, buf) => {

@@ -28,9 +28,14 @@ const Metric = ({ label, value, t }) => (
 // ── Strategy detail ──────────────────────────────────────────────────────────
 export function StrategyDetail({ id }) {
   const d = useApi(`/api/strategies/${id}`);
-  if (!d) return <div className="empty">Loading…</div>;
+  if (!d) return (
+    <div className="empty" style={{ height: 200, flexDirection: 'column', gap: 10 }}>
+      <div style={{ width: 32, height: 32, border: '2px solid rgba(255,255,255,0.1)', borderTopColor: '#F0B41E', borderRadius: '50%', animation: 'spin .8s linear infinite' }} />
+      <span>Loading strategy…</span>
+    </div>
+  );
   const gold = String(d.key).startsWith('gold_');
-  const eth = String(d.key).startsWith('eth_');
+  const eth  = String(d.key).startsWith('eth_');
   const m = d.metrics;
   const toggle = async () => { await fetch(`/api/strategies/${id}/${d.enabled ? 'disable' : 'enable'}`, { method: 'POST' }); location.reload(); };
   return (
@@ -61,7 +66,12 @@ export function StrategyDetail({ id }) {
         <Metric label="This week" value={inr(d.periods?.weekly?.netPnl)} t={tone(d.periods?.weekly?.netPnl)} />
         <Metric label="This month" value={inr(d.periods?.monthly?.netPnl)} t={tone(d.periods?.monthly?.netPnl)} />
       </div>
-      <Panel title="Equity curve"><AreaChart points={(d.equity || []).map((e) => ({ v: e.equity }))} color={eth ? '#627eea' : gold ? '#f0b41e' : '#2aa4e0'} /></Panel>
+      <Panel title="Equity curve">
+        <AreaChart
+          points={(d.equity || []).map((e) => ({ v: e.equity }))}
+          color={eth ? '#818CF8' : gold ? '#F0B41E' : '#38BDF8'}
+        />
+      </Panel>
       <div className="two">
         <Panel title="Daily net P&L"><DayBars rows={d.dailyPnl} /></Panel>
         <Panel title="Monthly net P&L">
@@ -264,14 +274,14 @@ export function RiskConfig() {
           <table className="def"><tbody>{rows.map(([k, v]) => <tr key={k}><td>{k}</td><td className="r">{String(v)}</td></tr>)}</tbody></table>
         </Panel>
       ))}
-      <Panel title="Danger zone">
+      <Panel title="Danger zone" style={{ borderColor: 'rgba(244,63,94,0.25)', background: 'rgba(244,63,94,0.04)' }}>
         <button className="btn danger" onClick={async () => {
           const pwd = prompt('Enter CLEAR_DB_PASSWORD to wipe the whole trading book:');
           if (pwd == null) return;
           const r = await fetch('/api/admin/clearbook', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pwd }) }).then((res) => res.json());
           if (r.ok) { alert('Trading book wiped — all P&L cleared.'); location.reload(); } else { alert(`Clear failed: ${r.error || 'unknown error'}`); }
         }}>Clear all P&L / wipe book</button>
-        <p className="muted" style={{ marginTop: 8 }}>Wipes every trade, order, signal, scan, event and stored metric. Requires the <code>CLEAR_DB_PASSWORD</code> set on the server.</p>
+        <p className="muted" style={{ marginTop: 10, fontSize: 12 }}>Wipes every trade, order, signal, scan, event and stored metric. Requires the <code>CLEAR_DB_PASSWORD</code> set on the server.</p>
       </Panel>
       <div className="callout">Trailing arms when the target trades; the stop then locks the full target profit and follows the best price. It never loosens. All fills are simulated — no broker is connected.</div>
     </>

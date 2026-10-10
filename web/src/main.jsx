@@ -58,7 +58,7 @@ function TopBar({ overview, health, route }) {
   );
 }
 
-function CryptoHero({ title, quotePath, barsPath, color }) {
+function CryptoHero({ title, quotePath, barsPath, color, variant }) {
   const quote = useApi(quotePath);
   const bars = useApi(barsPath, 15000);
   const change = bars?.length > 1 ? bars[bars.length - 1].close - bars[0].close : null;
@@ -69,9 +69,9 @@ function CryptoHero({ title, quotePath, barsPath, color }) {
     : '';
   if (quote?.price != null) prevRef.current = quote.price;
   return (
-    <section className="hero" style={{ '--c': color }}>
+    <section className={`hero hero-${variant}`}>
       <div className="hero-left">
-        <div className="sym">{title} <span className="feed">SPOT · Delta India · 1m</span></div>
+        <div className="sym" style={{ color }}>{title} <span className="feed">SPOT · Delta India · 1m</span></div>
         <div className={`big ${tickDir}`} style={{ color }}>{`$${price(quote?.price)}`}</div>
         <div className={`chg ${tone(change)}`}>{change != null ? `${change >= 0 ? '+' : ''}${change.toFixed(2)} (${(pctChg * 100).toFixed(2)}%)` : '—'} <span className="muted">day</span></div>
         <div className="chips">
@@ -183,8 +183,8 @@ function Dashboard() {
   const nseTs = traders.filter((t) => !String(t.key).startsWith('gold_') && !String(t.key).startsWith('eth_'));
   return (
     <>
-        <CryptoHero title="XAUTUSD" quotePath="/api/gold/quote" barsPath="/api/gold/bars" color="#f0b41e" />
-        <CryptoHero title="ETHUSD" quotePath="/api/eth/quote" barsPath="/api/eth/bars" color="#627eea" />
+        <CryptoHero title="XAUUSD" quotePath="/api/gold/quote" barsPath="/api/gold/bars" color="#F0B41E" variant="gold" />
+        <CryptoHero title="ETHUSD" quotePath="/api/eth/quote" barsPath="/api/eth/bars" color="#818CF8" variant="eth" />
         <div className="stats">
           <Stat label="Total P&L" value={inr(a?.netPnl)} t={tone(a?.netPnl)} />
           <Stat label="Today" value={inr(overview?.today?.netPnl)} t={tone(overview?.today?.netPnl)} />
